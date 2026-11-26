@@ -9,7 +9,7 @@ CLI_BIN   := $(BUILD_DIR)/optrich-vm
 TEST_BINS := $(BUILD_DIR)/test_memory $(BUILD_DIR)/test_core_wasm $(BUILD_DIR)/test_mem_opcodes \
              $(BUILD_DIR)/test_gc $(BUILD_DIR)/test_multimodule
 
-.PHONY: all test clean
+.PHONY: all test examples clean
 
 all: $(CLI_BIN)
 
@@ -31,6 +31,16 @@ test: $(TEST_BINS)
 		$$t || exit 1; \
 	done
 	@echo "All test suites passed!"
+
+examples: $(CLI_BIN)
+	@echo "=== Running examples ==="
+	@printf "span_demo: "; $(CLI_BIN) examples/span_demo.wat main
+	@printf "01_core_wasm: "; $(CLI_BIN) examples/01_core_wasm.wat main
+	@printf "02_split_blocks_linked_list: "; $(CLI_BIN) examples/02_split_blocks_linked_list.wat main
+	@printf "03_bulk_and_spans: "; $(CLI_BIN) examples/03_bulk_and_spans.wat main
+	@echo "--- 04_gc_and_clone_span ---"; $(CLI_BIN) --gc-threshold 32 --gc-stats examples/04_gc_and_clone_span.wat main
+	@printf "05_multimodule_sharing: "; $(CLI_BIN) --link strlib=examples/05_multimodule_sharing/strlib.wat examples/05_multimodule_sharing/app.wat main
+	@echo "--- 06_polymorphic_interfaces ---"; $(CLI_BIN) --link shape_iface=examples/06_polymorphic_interfaces/shape_iface.wat --link rect=examples/06_polymorphic_interfaces/rect.wat --link square=examples/06_polymorphic_interfaces/square.wat --gc-stats examples/06_polymorphic_interfaces/main.wat main
 
 clean:
 	rm -rf $(BUILD_DIR)
