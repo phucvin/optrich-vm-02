@@ -1,0 +1,123 @@
+#pragma once
+
+#include <cstdint>
+#include <cstring>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+
+namespace optrich {
+
+using HandleId = uint32_t;
+constexpr HandleId kNullHandle = 0;
+
+// Value types supported by Optrich VM 02.
+// Handles are strictly distinct from i32 (unforgeable capabilities).
+enum class ValType : uint8_t {
+    I32 = 0,
+    I64 = 1,
+    F32 = 2,
+    F64 = 3,
+    Handle = 4,    // Dynamic capability handle (readOnly checked at runtime)
+    RwHandle = 5,  // Statically read-write handle
+    RoHandle = 6,  // Statically read-only handle (writes rejected at compile time)
+};
+
+inline bool is_handle_type(ValType t) {
+    return t == ValType::Handle || t == ValType::RwHandle || t == ValType::RoHandle;
+}
+
+// Can a value of type `from` be used where `to` is expected?
+inline bool is_type_compatible(ValType from, ValType to) {
+    if (from == to) return true;
+    // Any specific handle (rw_handle / ro_handle) can upcast to dynamic `handle`.
+    if (to == ValType::Handle && is_handle_type(from)) return true;
+    // rw_handle can be viewed as ro_handle without breaking safety?
+    // Keep explicit mem.readonly for rw->ro downgrade so readOnly flag is set at runtime!
+    return false;
+}
+
+inline const char* val_type_name(ValType t) {
+    switch (t) {
+        case ValType::I32:      return "i32";
+        case ValType::I64:      return "i64";
+        case ValType::F32:      return "f32";
+        case ValType::F64:      return "f64";
+        case ValType::Handle:   return "handle";
+        case ValType::RwHandle: return "rw_handle";
+        case ValType::RoHandle: return "ro_handle";
+    }
+    return "unknown";
+}
+
+// Fat handle carried directly on the operand stack & locals for O(1) memory access
+// without per-access handle-table lookups.
+constexpr uint32_t kFlagValid    = 1u << 0;
+constexpr uint32_t kFlagReadOnly = 1u << 1;
+
+struct FatHandle {
+    uint8_t* ptr      = nullptr;
+    uint32_t byteSize = 0;
+    uint32_t flags    = 0;
+    HandleId id       = kNullHandle;
+
+    static FatHandle null() { return FatHandle{}; }
+
+    bool is_null() const { return id == kNullHandle || (flags & kFlagValid) == 0; }
+    bool is_readonly() const { return (flags & kFlagReadOnly) != 0; }
+};
+
+// Uniform 24-byte stack slot value.
+// Kept trivially copyable for fast flat-stack operations.
+struct Value {
+    union {
+        int32_t   i32;
+        int64_t   i64;
+        float     f32;
+        double    f64;
+        FatHandle handle;
+    };
+
+    Value() : handle(FatHandle::null()) {}
+
+    static Value from_i32(int32_t v)      { Value val; val.i32 = v; return val; }
+    static Value from_u32(uint32_t v)     { Value val; val.i32 = static_cast<int32_t>(v); return val; }
+    static Value from_i64(int64_t v)      { Value val; val.i64 = v; return val; }
+    static Value from_u64(uint64_t v)     { Value val; val.i64 = static_cast<int64_t>(v); return val; }
+    static Value from_f32(float v)        { Value val; val.f32 = v; return val; }
+    static Value from_f64(double v)       { Value val; val.f64 = v; return val; }
+    static Value from_handle(FatHandle h) { Value val; val.handle = h; return val; }
+
+    static Value zero(ValType t) {
+        switch (t) {
+            case ValType::I32:      return from_i32(0);
+            case ValType::I64:      return from_i64(0);
+            case ValType::F32:      return from_f32(0.0f);
+            case ValType::F64:      return from_f64(0.0);
+            case ValType::Handle:
+            case ValType::RwHandle:
+            case ValType::RoHandle: return from_handle(FatHandle::null());
+        }
+        return from_i32(0);
+    }
+};
+
+// Runtime trap exception (bounds violation, write to read-only, div-by-zero, unreachable, etc.)
+class Trap : public std::runtime_error {
+public:
+    explicit Trap(const std::string& msg) : std::runtime_error(msg) {}
+};
+
+// Compile-time / validation error (unknown opcode, type mismatch, static ro_handle write, etc.)
+class CompileError : public std::runtime_error {
+public:
+    explicit CompileError(const std::string& msg) : std::runtime_error(msg) {}
+};
+
+// Parse error (malformed WAT syntax)
+class ParseError : public std::runtime_error {
+public:
+    explicit ParseError(const std::string& msg) : std::runtime_error(msg) {}
+};
+
+} // namespace optrich

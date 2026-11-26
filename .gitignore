@@ -1,10 +1,3 @@
 build/
 *.o
-*.a
-*.so
-*.dylib
 *.out
-.DS_Store
-.vscode/
-.idea/
-compile_commands.json
