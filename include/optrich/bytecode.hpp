@@ -41,6 +41,15 @@ enum class OpCode : uint16_t {
     HandleNull,
     MemConstStr, // imm.u32 = string constant index -> pushes readonly FatHandle
 
+    // Reference & Dynamic Table Opcodes (for collision-free cross-module dispatch)
+    RefFunc,     // imm.u32 = unified func index -> pushes FuncRef
+    RefNullFunc, // () -> pushes null FuncRef
+    RefIsNull,   // (funcref) -> i32
+    TableGet,    // imm.u32 = table index: (idx: i32) -> funcref
+    TableSet,    // imm.u32 = table index: (idx: i32, val: funcref) -> ()
+    TableSize,   // imm.u32 = table index: () -> i32
+    TableGrow,   // imm.u32 = table index: (init: funcref, delta: i32) -> i32 (prev size)
+
     // Native Split-Block Memory Opcodes (Phases 2 & 3)
     MemAlloc,      // (num_bytes: i32, num_refs: i32) -> rw_handle
     MemSpan,       // (h: handle, byte_off: i32, byte_len: i32) -> handle
@@ -252,6 +261,7 @@ struct CompiledModule {
     std::vector<std::string>                  strings;
     std::unordered_map<std::string, uint32_t> exports;      // export name -> unified func index
     std::unordered_map<std::string, uint32_t> tableExports; // export name -> unified table index
+    int32_t                                   startFunc = -1; // optional (start $fn) index
 
     uint32_t total_funcs() const {
         return static_cast<uint32_t>(funcImports.size() + funcs.size());

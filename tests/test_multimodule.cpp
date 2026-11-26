@@ -166,6 +166,117 @@ TEST(host_func_interop_and_link_errors) {
     )"), LinkError);
 }
 
+TEST(dynamic_funcref_table_grow_start_and_multi_interface_trait_objects) {
+    Runtime rt;
+
+    // Interface A: private vtable grown dynamically via `table.grow` + `ref.func`
+    rt.instantiate_wat("iface_a", R"(
+    (module
+      (type $fn_t (func (param handle) (result i32)))
+      (table $t 0 funcref)
+      (func (export "register") (param $f funcref) (result i32)
+        (table.grow $t (local.get $f) (i32.const 1)))
+      (func (export "size") (result i32)
+        (table.size $t))
+      (func (export "wrap") (param $d handle) (param $slot i32) (result ro_handle)
+        (local $w rw_handle)
+        (local.set $w (mem.alloc (i32.const 4) (i32.const 1)))
+        (mem.write_i32 (local.get $w) (i32.const 0) (local.get $slot))
+        (mem.write_ref (local.get $w) (i32.const 0) (local.get $d))
+        (mem.readonly (local.get $w)))
+      (func (export "call_a") (param $obj ro_handle) (result i32)
+        (call_indirect $t (type $fn_t)
+          (mem.read_ref (local.get $obj) (i32.const 0))
+          (mem.read_i32 (local.get $obj) (i32.const 0))))
+    )
+    )");
+
+    // Interface B: completely independent private vtable
+    rt.instantiate_wat("iface_b", R"(
+    (module
+      (type $fn_t (func (param handle) (result i32)))
+      (table $t 0 funcref)
+      (func (export "register") (param $f funcref) (result i32)
+        (table.grow $t (local.get $f) (i32.const 1)))
+      (func (export "wrap") (param $d handle) (param $slot i32) (result ro_handle)
+        (local $w rw_handle)
+        (local.set $w (mem.alloc (i32.const 4) (i32.const 1)))
+        (mem.write_i32 (local.get $w) (i32.const 0) (local.get $slot))
+        (mem.write_ref (local.get $w) (i32.const 0) (local.get $d))
+        (mem.readonly (local.get $w)))
+      (func (export "call_b") (param $obj ro_handle) (result i32)
+        (call_indirect $t (type $fn_t)
+          (mem.read_ref (local.get $obj) (i32.const 0))
+          (mem.read_i32 (local.get $obj) (i32.const 0))))
+    )
+    )");
+
+    // Implementer registers into BOTH interfaces automatically via `(start $init)`
+    rt.instantiate_wat("box", R"(
+    (module
+      (import "iface_a" "register" (func $reg_a (param funcref) (result i32)))
+      (import "iface_a" "wrap"     (func $wrap_a (param handle i32) (result ro_handle)))
+      (import "iface_b" "register" (func $reg_b (param funcref) (result i32)))
+      (import "iface_b" "wrap"     (func $wrap_b (param handle i32) (result ro_handle)))
+
+      (global $slot_a (mut i32) (i32.const -1))
+      (global $slot_b (mut i32) (i32.const -1))
+
+      (func $impl_a (param $self handle) (result i32)
+        (i32.add (mem.read_i32 (local.get $self) (i32.const 0)) (i32.const 10)))
+      (func $impl_b (param $self handle) (result i32)
+        (i32.mul (mem.read_i32 (local.get $self) (i32.const 0)) (i32.const 3)))
+
+      (func $init
+        (global.set $slot_a (call $reg_a (ref.func $impl_a)))
+        (global.set $slot_b (call $reg_b (ref.func $impl_b))))
+      (start $init)
+
+      (func (export "make_and_test") (param $v i32) (result i32)
+        (local $d rw_handle)
+        (local.set $d (mem.alloc (i32.const 4) (i32.const 0)))
+        (mem.write_i32 (local.get $d) (i32.const 0) (local.get $v))
+        ;; Return slot_a * 1000 + impl_a(v) + impl_b(v) via wrappers
+        (i32.add
+          (i32.mul (global.get $slot_a) (i32.const 1000))
+          (i32.add
+            (call $impl_a (local.get $d))
+            (call $impl_b (local.get $d)))))
+      (func (export "as_a") (param $d handle) (result ro_handle)
+        (call $wrap_a (local.get $d) (global.get $slot_a)))
+      (func (export "as_b") (param $d handle) (result ro_handle)
+        (call $wrap_b (local.get $d) (global.get $slot_b)))
+      (func (export "new_box") (param $v i32) (result handle)
+        (local $d rw_handle)
+        (local.set $d (mem.alloc (i32.const 4) (i32.const 0)))
+        (mem.write_i32 (local.get $d) (i32.const 0) (local.get $v))
+        (local.get $d))
+    )
+    )");
+
+    // Caller invokes both interfaces on the exact same `box(7)` handle
+    rt.instantiate_wat("driver", R"(
+    (module
+      (import "iface_a" "call_a" (func $call_a (param ro_handle) (result i32)))
+      (import "iface_b" "call_b" (func $call_b (param ro_handle) (result i32)))
+      (import "box" "new_box" (func $new_box (param i32) (result handle)))
+      (import "box" "as_a"    (func $as_a    (param handle) (result ro_handle)))
+      (import "box" "as_b"    (func $as_b    (param handle) (result ro_handle)))
+
+      (func (export "run") (result i32)
+        (local $b handle)
+        (local.set $b (call $new_box (i32.const 7)))
+        ;; call_a(7) = 17, call_b(7) = 21 => 38
+        (i32.add
+          (call $call_a (call $as_a (local.get $b)))
+          (call $call_b (call $as_b (local.get $b)))))
+    )
+    )");
+
+    ASSERT_EQ(rt.invoke("iface_a", "size")[0].i32, 1);
+    ASSERT_EQ(rt.invoke("driver", "run")[0].i32, 38);
+}
+
 int main() {
     return optrich_test::run_all_tests();
 }

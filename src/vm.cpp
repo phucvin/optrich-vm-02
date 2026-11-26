@@ -295,6 +295,10 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         stack_base[idx].type = ValType::Handle;
         stack_base[idx].handle = h;
     };
+    auto set_funcref = [&](size_t idx, FuncRef f) {
+        stack_base[idx].type = ValType::FuncRef;
+        stack_base[idx].funcref = f;
+    };
 
     auto do_branch = [&](uint32_t target_pc, uint16_t arity, uint32_t drop_count) {
         if (drop_count > 0) {
@@ -381,6 +385,13 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         &&L_F64Const,
         &&L_HandleNull,
         &&L_MemConstStr,
+        &&L_RefFunc,
+        &&L_RefNullFunc,
+        &&L_RefIsNull,
+        &&L_TableGet,
+        &&L_TableSet,
+        &&L_TableSize,
+        &&L_TableGrow,
         &&L_MemAlloc,
         &&L_MemSpan,
         &&L_MemRefSpan,
@@ -596,6 +607,63 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
     CASE_OP(MemConstStr)
         set_handle(sp++, str_handles[ins->imm.u32]);
         DISPATCH();
+
+    // --- Reference & Dynamic Table Opcodes ---
+
+    CASE_OP(RefFunc)
+        set_funcref(sp++, cur_inst->func_ref(ins->imm.u32));
+        DISPATCH();
+
+    CASE_OP(RefNullFunc)
+        set_funcref(sp++, FuncRef::null());
+        DISPATCH();
+
+    CASE_OP(RefIsNull) {
+        FuncRef f = stack_base[sp - 1].funcref;
+        set_i32(sp - 1, f.is_null() ? 1 : 0);
+        DISPATCH();
+    }
+
+    CASE_OP(TableGet) {
+        uint32_t idx = static_cast<uint32_t>(stack_base[sp - 1].i32);
+        const FuncTable& tbl = cur_inst->table(ins->imm.u32);
+        if (idx >= tbl.elements.size()) {
+            throw Trap("table.get out of bounds");
+        }
+        set_funcref(sp - 1, tbl.elements[idx]);
+        DISPATCH();
+    }
+
+    CASE_OP(TableSet) {
+        FuncRef val  = stack_base[--sp].funcref;
+        uint32_t idx = static_cast<uint32_t>(stack_base[--sp].i32);
+        FuncTable& tbl = cur_inst->table(ins->imm.u32);
+        if (idx >= tbl.elements.size()) {
+            throw Trap("table.set out of bounds");
+        }
+        tbl.elements[idx] = val;
+        DISPATCH();
+    }
+
+    CASE_OP(TableSize) {
+        const FuncTable& tbl = cur_inst->table(ins->imm.u32);
+        set_i32(sp++, static_cast<int32_t>(tbl.elements.size()));
+        DISPATCH();
+    }
+
+    CASE_OP(TableGrow) {
+        int32_t delta = stack_base[--sp].i32;
+        FuncRef init  = stack_base[sp - 1].funcref;
+        FuncTable& tbl = cur_inst->table(ins->imm.u32);
+        if (delta < 0) {
+            set_i32(sp - 1, -1);
+            DISPATCH();
+        }
+        size_t old_size = tbl.elements.size();
+        tbl.elements.resize(old_size + static_cast<size_t>(delta), init);
+        set_i32(sp - 1, static_cast<int32_t>(old_size));
+        DISPATCH();
+    }
 
     // --- Native Split-Block Memory Opcodes (GC-safepointed!) ---
 

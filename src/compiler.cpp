@@ -19,6 +19,7 @@ std::optional<ValType> parse_val_type(std::string_view s) {
     if (s == "handle")    return ValType::Handle;
     if (s == "rw_handle") return ValType::RwHandle;
     if (s == "ro_handle") return ValType::RoHandle;
+    if (s == "funcref")   return ValType::FuncRef;
     return std::nullopt;
 }
 
@@ -580,6 +581,29 @@ private:
             return;
         }
 
+        if (op == "table.get" || op == "table.set" || op == "table.size" || op == "table.grow") {
+            size_t idx = 1;
+            uint32_t table_idx = 0;
+            if (idx < expr.children.size() && expr.children[idx].is_atom()) {
+                table_idx = mctx_.resolve_table(expr.children[idx++]);
+            } else if (mctx_.mod.total_tables() == 0) {
+                throw CompileError(op + " requires a declared or imported table at line " +
+                                   std::to_string(line));
+            }
+            compile_sequence(expr.children, idx, expr.children.size());
+            emit_table_op(op, table_idx, line);
+            return;
+        }
+
+        if (op == "ref.null") {
+            if (expr.children.size() != 2 || !expr.children[1].is_atom() || expr.children[1].text != "func") {
+                throw CompileError("ref.null expects 'func' at line " + std::to_string(line));
+            }
+            push_type(ValType::FuncRef);
+            fn_.code.push_back(Instr::make(OpCode::RefNullFunc));
+            return;
+        }
+
         if (op == "br_table") {
             size_t operand_start = expr.children.size();
             while (operand_start > 1 && expr.children[operand_start - 1].is_list()) {
@@ -653,6 +677,29 @@ private:
             parse_call_indirect_header(nodes, i + 1, end, next_idx, table_idx, type_idx, line);
             emit_call_indirect(table_idx, type_idx, line);
             return next_idx;
+        }
+
+        if (op == "table.get" || op == "table.set" || op == "table.size" || op == "table.grow") {
+            size_t idx = i + 1;
+            uint32_t table_idx = 0;
+            if (idx < end && nodes[idx].is_atom() &&
+                (is_ident(nodes[idx]) || (!nodes[idx].text.empty() && std::isdigit(static_cast<unsigned char>(nodes[idx].text[0]))))) {
+                table_idx = mctx_.resolve_table(nodes[idx++]);
+            } else if (mctx_.mod.total_tables() == 0) {
+                throw CompileError(op + " requires a declared or imported table at line " +
+                                   std::to_string(line));
+            }
+            emit_table_op(op, table_idx, line);
+            return idx;
+        }
+
+        if (op == "ref.null") {
+            if (i + 1 >= end || !nodes[i + 1].is_atom() || nodes[i + 1].text != "func") {
+                throw CompileError("ref.null expects 'func' at line " + std::to_string(line));
+            }
+            push_type(ValType::FuncRef);
+            fn_.code.push_back(Instr::make(OpCode::RefNullFunc));
+            return i + 2;
         }
 
         if (op == "br_table") {
@@ -778,13 +825,33 @@ private:
         set_polymorphic();
     }
 
+    void emit_table_op(const std::string& op, uint32_t table_idx, size_t line) {
+        if (op == "table.get") {
+            pop_expected(ValType::I32, line);
+            push_type(ValType::FuncRef);
+            fn_.code.push_back(Instr::make_u32(OpCode::TableGet, table_idx));
+        } else if (op == "table.set") {
+            pop_expected(ValType::FuncRef, line);
+            pop_expected(ValType::I32, line);
+            fn_.code.push_back(Instr::make_u32(OpCode::TableSet, table_idx));
+        } else if (op == "table.size") {
+            push_type(ValType::I32);
+            fn_.code.push_back(Instr::make_u32(OpCode::TableSize, table_idx));
+        } else if (op == "table.grow") {
+            pop_expected(ValType::I32, line);     // delta
+            pop_expected(ValType::FuncRef, line); // init_val
+            push_type(ValType::I32);              // previous size (new slot index)
+            fn_.code.push_back(Instr::make_u32(OpCode::TableGrow, table_idx));
+        }
+    }
+
     static size_t immediate_count(const std::string& op) {
         if (op == "local.get" || op == "local.set" || op == "local.tee" ||
             op == "global.get" || op == "global.set" ||
             op == "i32.const" || op == "i64.const" ||
             op == "f32.const" || op == "f64.const" ||
             op == "br" || op == "br_if" || op == "call" ||
-            op == "mem.const_str") {
+            op == "mem.const_str" || op == "ref.func") {
             return 1;
         }
         return 0;
@@ -941,6 +1008,23 @@ private:
             uint32_t sidx = mctx_.resolve_or_add_string(nodes[imm_idx]);
             push_type(ValType::RoHandle);
             fn_.code.push_back(Instr::make_u32(OpCode::MemConstStr, sidx));
+            return;
+        }
+        if (op == "ref.func") {
+            uint32_t fidx = mctx_.resolve_func(nodes[imm_idx]);
+            push_type(ValType::FuncRef);
+            fn_.code.push_back(Instr::make_u32(OpCode::RefFunc, fidx));
+            return;
+        }
+        if (op == "ref.null_func") {
+            push_type(ValType::FuncRef);
+            fn_.code.push_back(Instr::make(OpCode::RefNullFunc));
+            return;
+        }
+        if (op == "ref.is_null") {
+            pop_expected(ValType::FuncRef, line);
+            push_type(ValType::I32);
+            fn_.code.push_back(Instr::make(OpCode::RefIsNull));
             return;
         }
 
@@ -1264,6 +1348,7 @@ CompiledModule compile_module(const SExpr& root) {
     std::vector<PendingFunc> pendingFuncs;
     std::vector<const SExpr*> pendingExports;
     std::vector<const SExpr*> pendingElems;
+    const SExpr* pendingStart = nullptr;
 
     // Pass 1a: Types and Imports first (so imports always occupy indices [0 .. N_imp - 1]).
     for (size_t i = 1; i < root.children.size(); ++i) {
@@ -1539,6 +1624,14 @@ CompiledModule compile_module(const SExpr& root) {
             pendingFuncs.push_back(PendingFunc{local_fidx, &item, idx, std::move(localNames)});
         } else if (head == "export") {
             pendingExports.push_back(&item);
+        } else if (head == "start") {
+            if (pendingStart != nullptr) {
+                throw CompileError("duplicate (start ...) section at line " + std::to_string(item.line));
+            }
+            if (item.children.size() != 2) {
+                throw CompileError("invalid (start ...) declaration at line " + std::to_string(item.line));
+            }
+            pendingStart = &item;
         } else {
             throw CompileError("unknown module section '(" + head + " ...)' at line " +
                                std::to_string(item.line));
@@ -1595,6 +1688,17 @@ CompiledModule compile_module(const SExpr& root) {
             seg.funcIndices.push_back(mctx.resolve_func(el->children[idx]));
         }
         mctx.mod.elems.push_back(std::move(seg));
+    }
+
+    // Resolve optional (start $fn)
+    if (pendingStart != nullptr) {
+        uint32_t fidx = mctx.resolve_func(pendingStart->children[1]);
+        const FuncSignature& sig = mctx.mod.func_sig(fidx);
+        if (!sig.params.empty() || !sig.results.empty()) {
+            throw CompileError("start function must have signature () -> () at line " +
+                               std::to_string(pendingStart->line));
+        }
+        mctx.mod.startFunc = static_cast<int32_t>(fidx);
     }
 
     // Pass 2: Compile function bodies

@@ -9,11 +9,14 @@
 
 namespace optrich {
 
+class ModuleInstance;
+struct HostFuncEntry;
+
 using HandleId = uint32_t;
 constexpr HandleId kNullHandle = 0;
 
 // Value types supported by Optrich VM 02.
-// Handles are strictly distinct from i32 (unforgeable capabilities).
+// Handles and funcrefs are strictly distinct from i32 (unforgeable capabilities).
 enum class ValType : uint8_t {
     I32 = 0,
     I64 = 1,
@@ -22,6 +25,7 @@ enum class ValType : uint8_t {
     Handle = 4,    // Dynamic capability handle (readOnly checked at runtime)
     RwHandle = 5,  // Statically read-write handle
     RoHandle = 6,  // Statically read-only handle (writes rejected at compile time)
+    FuncRef = 7,   // Unforgeable cross-module function reference
 };
 
 inline bool is_handle_type(ValType t) {
@@ -45,6 +49,7 @@ inline const char* val_type_name(ValType t) {
         case ValType::Handle:   return "handle";
         case ValType::RwHandle: return "rw_handle";
         case ValType::RoHandle: return "ro_handle";
+        case ValType::FuncRef:  return "funcref";
     }
     return "unknown";
 }
@@ -66,6 +71,20 @@ struct FatHandle {
     bool is_readonly() const { return (flags & kFlagReadOnly) != 0; }
 };
 
+// Resolved callable reference carrying its target ModuleInstance* (or HostFuncEntry*)
+// so cross-module direct calls, call_indirect, and dynamic table registration
+// push CallFrames with zero boxing/copying.
+struct FuncRef {
+    ModuleInstance*      instance     = nullptr;
+    uint32_t             localFuncIdx = 0;
+    const HostFuncEntry* host         = nullptr;
+
+    static FuncRef null() { return FuncRef{}; }
+
+    bool is_null() const { return instance == nullptr && host == nullptr; }
+    bool is_host() const { return host != nullptr; }
+};
+
 // Tagged stack slot value.
 // Carrying `type` makes operand-stack and call-frame GC root scanning 100% precise.
 struct Value {
@@ -76,19 +95,21 @@ struct Value {
         float     f32;
         double    f64;
         FatHandle handle;
+        FuncRef   funcref;
     };
 
     Value() : type(ValType::I32), i64(0) {}
 
     bool is_handle() const { return is_handle_type(type); }
 
-    static Value from_i32(int32_t v)      { Value val; val.type = ValType::I32;    val.i32 = v; return val; }
-    static Value from_u32(uint32_t v)     { Value val; val.type = ValType::I32;    val.i32 = static_cast<int32_t>(v); return val; }
-    static Value from_i64(int64_t v)      { Value val; val.type = ValType::I64;    val.i64 = v; return val; }
-    static Value from_u64(uint64_t v)     { Value val; val.type = ValType::I64;    val.i64 = static_cast<int64_t>(v); return val; }
-    static Value from_f32(float v)        { Value val; val.type = ValType::F32;    val.f32 = v; return val; }
-    static Value from_f64(double v)       { Value val; val.type = ValType::F64;    val.f64 = v; return val; }
-    static Value from_handle(FatHandle h) { Value val; val.type = ValType::Handle; val.handle = h; return val; }
+    static Value from_i32(int32_t v)       { Value val; val.type = ValType::I32;     val.i32 = v; return val; }
+    static Value from_u32(uint32_t v)      { Value val; val.type = ValType::I32;     val.i32 = static_cast<int32_t>(v); return val; }
+    static Value from_i64(int64_t v)       { Value val; val.type = ValType::I64;     val.i64 = v; return val; }
+    static Value from_u64(uint64_t v)      { Value val; val.type = ValType::I64;     val.i64 = static_cast<int64_t>(v); return val; }
+    static Value from_f32(float v)         { Value val; val.type = ValType::F32;     val.f32 = v; return val; }
+    static Value from_f64(double v)        { Value val; val.type = ValType::F64;     val.f64 = v; return val; }
+    static Value from_handle(FatHandle h)  { Value val; val.type = ValType::Handle;  val.handle = h; return val; }
+    static Value from_funcref(FuncRef f)   { Value val; val.type = ValType::FuncRef; val.funcref = f; return val; }
 
     static Value zero(ValType t) {
         switch (t) {
@@ -104,6 +125,7 @@ struct Value {
                 val.handle = FatHandle::null();
                 return val;
             }
+            case ValType::FuncRef:  return from_funcref(FuncRef::null());
         }
         return from_i32(0);
     }

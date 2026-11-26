@@ -10,7 +10,7 @@ Build the CLI first with `make`, or run all examples at once with `make examples
 | [`03_bulk_and_spans.wat`](03_bulk_and_spans.wat) | 2 | `mem.fill`, overlapping `mem.copy`, nested `mem.span`, `mem.readonly` | `260` |
 | [`04_gc_and_clone_span.wat`](04_gc_and_clone_span.wat) | 3 | Precise cycle collection, auto-GC threshold, `mem.clone_span` detaching 4 KiB buffers | `4950` + `[gc] ...` |
 | [`05_multimodule_sharing/`](05_multimodule_sharing/) | 4 | Direct cross-module calls passing zero-copy `ro_handle` spans + `mem.cmp` | `102` |
-| [`06_polymorphic_interfaces/`](06_polymorphic_interfaces/) | 4 | Shared `funcref` vtable, cross-module `call_indirect`, ref-array of polymorphic handles | `79` + `[gc] ...` |
+| [`06_polymorphic_interfaces/`](06_polymorphic_interfaces/) | 4 | Private dynamic vtables (`ref.func` + `table.grow` + `(start)`), multi-interface trait objects (`Shape` + `Perimeter`) | `93` + `[gc] ...` |
 
 ## Running Individually
 
@@ -26,9 +26,10 @@ Build the CLI first with `make`, or run all examples at once with `make examples
   --link strlib=examples/05_multimodule_sharing/strlib.wat \
   examples/05_multimodule_sharing/app.wat main
 
-# Cross-module polymorphic interface handles (call_indirect + shared vtable)
+# Cross-module polymorphic trait objects (dynamic private vtables + multiple interfaces)
 ./build/optrich-vm \
   --link shape_iface=examples/06_polymorphic_interfaces/shape_iface.wat \
+  --link perimeter_iface=examples/06_polymorphic_interfaces/perimeter_iface.wat \
   --link rect=examples/06_polymorphic_interfaces/rect.wat \
   --link square=examples/06_polymorphic_interfaces/square.wat \
   --gc-stats \
