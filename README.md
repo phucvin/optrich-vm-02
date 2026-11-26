@@ -40,6 +40,7 @@ make test
 * [Memory Model & Performance](docs/memory-model.md) — Design space, industry prior art (MS-Wasm, Java `MemorySegment`, CHERI), and interpreter/JIT performance strategy.
 * [Garbage Collection](docs/gc.md) — GC options and the Split Blocks (`alloc(num_bytes, num_refs)`) design.
 * [Shared Conventions](docs/shared-conventions.md) — Minimal conventions for shared UTF-8 string spans, typed slices, and polymorphic interface handles.
+* [Compiling C & High-Level Languages](docs/high-level-language.md) — Challenges of targeting `optrich-vm-02` from C, architectural options, and high-level language fit.
 
 ## Status
 
