@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -32,8 +33,6 @@ inline bool is_type_compatible(ValType from, ValType to) {
     if (from == to) return true;
     // Any specific handle (rw_handle / ro_handle) can upcast to dynamic `handle`.
     if (to == ValType::Handle && is_handle_type(from)) return true;
-    // rw_handle can be viewed as ro_handle without breaking safety?
-    // Keep explicit mem.readonly for rw->ro downgrade so readOnly flag is set at runtime!
     return false;
 }
 
@@ -67,9 +66,10 @@ struct FatHandle {
     bool is_readonly() const { return (flags & kFlagReadOnly) != 0; }
 };
 
-// Uniform 24-byte stack slot value.
-// Kept trivially copyable for fast flat-stack operations.
+// Tagged stack slot value.
+// Carrying `type` makes operand-stack and call-frame GC root scanning 100% precise.
 struct Value {
+    ValType type = ValType::I32;
     union {
         int32_t   i32;
         int64_t   i64;
@@ -78,15 +78,17 @@ struct Value {
         FatHandle handle;
     };
 
-    Value() : handle(FatHandle::null()) {}
+    Value() : type(ValType::I32), i64(0) {}
 
-    static Value from_i32(int32_t v)      { Value val; val.i32 = v; return val; }
-    static Value from_u32(uint32_t v)     { Value val; val.i32 = static_cast<int32_t>(v); return val; }
-    static Value from_i64(int64_t v)      { Value val; val.i64 = v; return val; }
-    static Value from_u64(uint64_t v)     { Value val; val.i64 = static_cast<int64_t>(v); return val; }
-    static Value from_f32(float v)        { Value val; val.f32 = v; return val; }
-    static Value from_f64(double v)       { Value val; val.f64 = v; return val; }
-    static Value from_handle(FatHandle h) { Value val; val.handle = h; return val; }
+    bool is_handle() const { return is_handle_type(type); }
+
+    static Value from_i32(int32_t v)      { Value val; val.type = ValType::I32;    val.i32 = v; return val; }
+    static Value from_u32(uint32_t v)     { Value val; val.type = ValType::I32;    val.i32 = static_cast<int32_t>(v); return val; }
+    static Value from_i64(int64_t v)      { Value val; val.type = ValType::I64;    val.i64 = v; return val; }
+    static Value from_u64(uint64_t v)     { Value val; val.type = ValType::I64;    val.i64 = static_cast<int64_t>(v); return val; }
+    static Value from_f32(float v)        { Value val; val.type = ValType::F32;    val.f32 = v; return val; }
+    static Value from_f64(double v)       { Value val; val.type = ValType::F64;    val.f64 = v; return val; }
+    static Value from_handle(FatHandle h) { Value val; val.type = ValType::Handle; val.handle = h; return val; }
 
     static Value zero(ValType t) {
         switch (t) {
@@ -96,10 +98,22 @@ struct Value {
             case ValType::F64:      return from_f64(0.0);
             case ValType::Handle:
             case ValType::RwHandle:
-            case ValType::RoHandle: return from_handle(FatHandle::null());
+            case ValType::RoHandle: {
+                Value val;
+                val.type = t;
+                val.handle = FatHandle::null();
+                return val;
+            }
         }
         return from_i32(0);
     }
+};
+
+struct GCStats {
+    size_t marked           = 0;
+    size_t swept            = 0;
+    size_t liveAfter        = 0;
+    size_t totalCollections = 0;
 };
 
 // Runtime trap exception (bounds violation, write to read-only, div-by-zero, unreachable, etc.)
@@ -118,6 +132,12 @@ public:
 class ParseError : public std::runtime_error {
 public:
     explicit ParseError(const std::string& msg) : std::runtime_error(msg) {}
+};
+
+// Link error (missing import, signature mismatch during multi-module linking)
+class LinkError : public std::runtime_error {
+public:
+    explicit LinkError(const std::string& msg) : std::runtime_error(msg) {}
 };
 
 } // namespace optrich

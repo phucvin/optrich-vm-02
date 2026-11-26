@@ -2,11 +2,12 @@ CXX      := g++
 CXXFLAGS := -std=c++20 -O2 -Wall -Wextra -Wpedantic -Iinclude
 
 BUILD_DIR := build
-LIB_SRCS  := src/memory_store.cpp src/parser.cpp src/compiler.cpp src/vm.cpp
+LIB_SRCS  := src/memory_store.cpp src/parser.cpp src/compiler.cpp src/vm.cpp src/runtime.cpp
 LIB_OBJS  := $(patsubst src/%.cpp,$(BUILD_DIR)/%.o,$(LIB_SRCS))
 
 CLI_BIN   := $(BUILD_DIR)/optrich-vm
-TEST_BINS := $(BUILD_DIR)/test_memory $(BUILD_DIR)/test_core_wasm $(BUILD_DIR)/test_mem_opcodes
+TEST_BINS := $(BUILD_DIR)/test_memory $(BUILD_DIR)/test_core_wasm $(BUILD_DIR)/test_mem_opcodes \
+             $(BUILD_DIR)/test_gc $(BUILD_DIR)/test_multimodule
 
 .PHONY: all test clean
 

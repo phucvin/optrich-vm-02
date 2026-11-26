@@ -4,7 +4,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace optrich {
@@ -52,6 +54,10 @@ public:
     // Create a zero-copy read-only view of `h` preserving both byte and ref bounds.
     FatHandle as_readonly(HandleId h);
 
+    // Detach a span (or block) into a fresh owning block containing only the sliced
+    // bytes and refs, preserving readOnly. Allows the original backing buffer to be GC'd.
+    FatHandle clone_span(HandleId h);
+
     // Resolve a HandleId into a FatHandle for pushing onto the operand stack.
     FatHandle to_fat_handle(HandleId h) const;
 
@@ -70,9 +76,29 @@ public:
     void read_bytes(HandleId h, uint32_t byte_off, void* dst, uint32_t len) const;
     void write_bytes(HandleId h, uint32_t byte_off, const void* src, uint32_t len);
 
-    // Stats / inspection (also useful for future Phase 3 GC)
+    // --- Phase 3: Precise Mark-and-Sweep GC ---
+
+    // Host pinning (ref-counted): pinned handles are always treated as GC roots.
+    void pin(HandleId h);
+    void unpin(HandleId h);
+    bool is_pinned(HandleId h) const;
+
+    // Run precise mark-and-sweep GC given the external root set (stacks, frames, globals, strings).
+    // Scans ONLY `refs` and span `rootHandle`s — skips `bytes` completely.
+    GCStats collect_garbage(const std::vector<HandleId>& roots);
+
+    // Automatic GC trigger configuration.
+    // When `gcThreshold_ > 0` and `liveCount_ >= gcThreshold_`, `gcCallback_` is invoked
+    // before new allocations. Set to 0 to disable automatic GC.
+    void   set_gc_threshold(size_t threshold) { gcThreshold_ = threshold; }
+    size_t gc_threshold() const { return gcThreshold_; }
+    void   set_gc_callback(std::function<void()> cb) { gcCallback_ = std::move(cb); }
+
+    // Stats / inspection
     size_t live_block_count() const { return liveCount_; }
     size_t total_slots() const { return objects_.size(); }
+    size_t free_list_size() const { return freeList_.size(); }
+    size_t total_collections() const { return totalCollections_; }
 
     const MemoryBlock& get_block(HandleId h) const;
 
@@ -81,10 +107,16 @@ private:
     const MemoryBlock& get_root(const MemoryBlock& blk) const;
     MemoryBlock&       get_root_mut(MemoryBlock& blk);
     HandleId           allocate_slot();
+    void               maybe_trigger_gc();
 
-    std::vector<MemoryBlock> objects_;   // index 0 is reserved for kNullHandle
-    std::vector<HandleId>    freeList_;  // recycled handle IDs (used by Phase 3 GC)
-    size_t                   liveCount_ = 0;
+    std::vector<MemoryBlock>             objects_;   // index 0 is reserved for kNullHandle
+    std::vector<HandleId>                freeList_;  // recycled handle IDs
+    std::unordered_map<HandleId, uint32_t> pinned_;  // host-pinned handle refcounts
+    size_t                               liveCount_        = 0;
+    size_t                               totalCollections_ = 0;
+    size_t                               gcThreshold_      = 4096;
+    bool                                 inGc_             = false;
+    std::function<void()>                gcCallback_;
 };
 
 } // namespace optrich

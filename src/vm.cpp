@@ -13,7 +13,6 @@ template <typename T>
 inline T wasm_nearest(T x) {
     if (std::isnan(x) || std::isinf(x) || x == T(0)) return x;
     T r = std::round(x);
-    // Ties to even: if |x - r| == 0.5 and r is odd, move toward zero by 1
     if (std::fabs(x - r) == T(0.5)) {
         if (std::fmod(r, T(2.0)) != T(0.0)) {
             r = (r > T(0)) ? (r - T(1)) : (r + T(1));
@@ -115,7 +114,52 @@ inline void fat_write(const FatHandle& h, uint32_t off, T val) {
 
 ModuleInstance::ModuleInstance(CompiledModule module, MemoryStore& store)
     : module_(std::move(module)), store_(store) {
-    // Pre-allocate all string constants as read-only handles in the shared MemoryStore.
+    if (!module_.funcImports.empty() || !module_.tableImports.empty()) {
+        throw LinkError("module has unresolved imports; instantiate via Runtime");
+    }
+    init_storage_and_elems();
+}
+
+ModuleInstance::ModuleInstance(CompiledModule module, MemoryStore& store,
+                               std::vector<FuncRef> imported_funcs,
+                               std::vector<std::shared_ptr<FuncTable>> imported_tables)
+    : module_(std::move(module)),
+      store_(store),
+      funcs_(std::move(imported_funcs)),
+      tables_(std::move(imported_tables)) {
+    init_storage_and_elems();
+}
+
+void ModuleInstance::init_storage_and_elems() {
+    // Append local functions to unified function table
+    funcs_.reserve(module_.total_funcs());
+    for (uint32_t i = 0; i < module_.funcs.size(); ++i) {
+        funcs_.push_back(FuncRef{this, i, nullptr});
+    }
+
+    // Append local tables to unified table list
+    tables_.reserve(module_.total_tables());
+    for (const auto& td : module_.tables) {
+        auto tbl = std::make_shared<FuncTable>();
+        tbl->elements.resize(td.initialSize);
+        tables_.push_back(std::move(tbl));
+    }
+
+    // Populate element segments (works across imported/shared tables!)
+    for (const auto& seg : module_.elems) {
+        if (seg.tableIdx >= tables_.size()) {
+            throw Trap("elem segment table index out of range");
+        }
+        FuncTable& tbl = *tables_[seg.tableIdx];
+        if (static_cast<uint64_t>(seg.offset) + seg.funcIndices.size() > tbl.elements.size()) {
+            throw Trap("elem segment out of table bounds");
+        }
+        for (size_t i = 0; i < seg.funcIndices.size(); ++i) {
+            tbl.elements[seg.offset + i] = funcs_[seg.funcIndices[i]];
+        }
+    }
+
+    // Pre-allocate string constants as read-only handles in the shared MemoryStore.
     stringHandles_.reserve(module_.strings.size());
     for (const auto& s : module_.strings) {
         stringHandles_.push_back(store_.alloc_readonly_bytes(s));
@@ -140,10 +184,41 @@ uint32_t ModuleInstance::find_export(std::string_view name) const {
     return it->second;
 }
 
+FuncRef ModuleInstance::find_export_func(std::string_view name) const {
+    return funcs_[find_export(name)];
+}
+
+std::shared_ptr<FuncTable> ModuleInstance::find_export_table(std::string_view name) const {
+    auto it = module_.tableExports.find(std::string(name));
+    if (it == module_.tableExports.end()) {
+        throw LinkError("table export not found: '" + std::string(name) + "'");
+    }
+    return tables_[it->second];
+}
+
+void ModuleInstance::collect_roots(std::vector<HandleId>& out) const {
+    for (const auto& fh : stringHandles_) {
+        if (!fh.is_null()) out.push_back(fh.id);
+    }
+    for (const auto& g : globals_) {
+        if (g.is_handle() && !g.handle.is_null()) {
+            out.push_back(g.handle.id);
+        }
+    }
+}
+
 VM::VM(size_t max_stack_values, size_t max_call_depth)
     : maxStack_(max_stack_values), maxCallDepth_(max_call_depth) {
     stack_.resize(maxStack_);
     frames_.reserve(64);
+}
+
+void VM::collect_roots(std::vector<HandleId>& out) const {
+    for (size_t i = 0; i < activeSp_; ++i) {
+        if (stack_[i].is_handle() && !stack_[i].handle.is_null()) {
+            out.push_back(stack_[i].handle.id);
+        }
+    }
 }
 
 std::vector<Value> VM::invoke(ModuleInstance& inst, std::string_view export_name,
@@ -154,11 +229,16 @@ std::vector<Value> VM::invoke(ModuleInstance& inst, std::string_view export_name
 
 std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
                                     const std::vector<Value>& args) {
-    const CompiledModule& mod = inst.module();
-    if (func_idx >= mod.funcs.size()) {
+    if (func_idx >= inst.module().total_funcs()) {
         throw Trap("function index out of range");
     }
-    const CompiledFunc* func = &mod.funcs[func_idx];
+    const FuncRef& entry_ref = inst.func_ref(func_idx);
+    if (entry_ref.is_host()) {
+        return entry_ref.host->fn(inst.store(), args);
+    }
+
+    ModuleInstance* cur_inst = entry_ref.instance;
+    const CompiledFunc* func = &cur_inst->module().funcs[entry_ref.localFuncIdx];
     if (args.size() != func->paramCount) {
         throw Trap("argument count mismatch: expected " + std::to_string(func->paramCount) +
                    ", got " + std::to_string(args.size()));
@@ -168,26 +248,53 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
     Value* const stack_base = stack_.data();
     size_t sp = 0;
 
+    // Ensure activeSp_ is reset even if a Trap is thrown.
+    struct ActiveSpGuard {
+        size_t& ref;
+        ~ActiveSpGuard() { ref = 0; }
+    } sp_guard{activeSp_};
+
     if (func->locals.size() >= maxStack_) {
         throw Trap("stack overflow");
     }
 
-    // Push arguments as initial locals, zero-initialize remaining locals.
     for (size_t i = 0; i < args.size(); ++i) {
         stack_base[sp++] = args[i];
     }
     for (size_t i = func->paramCount; i < func->locals.size(); ++i) {
         stack_base[sp++] = Value::zero(func->locals[i]);
     }
+    activeSp_ = sp;
 
     size_t locals_base = 0;
     Value* locals = stack_base;
     const Instr* pc = func->code.data();
-    frames_.push_back(CallFrame{func, pc, locals_base, sp});
+    frames_.push_back(CallFrame{cur_inst, func, pc, locals_base, sp});
 
-    MemoryStore& store = inst.store();
-    Value* globals = inst.globals().data();
-    const FatHandle* str_handles = inst.string_handles().data();
+    MemoryStore& store = cur_inst->store();
+    Value* globals = cur_inst->globals().data();
+    const FatHandle* str_handles = cur_inst->string_handles().data();
+
+    auto set_i32 = [&](size_t idx, int32_t v) {
+        stack_base[idx].type = ValType::I32;
+        stack_base[idx].i32 = v;
+    };
+    auto set_i64 = [&](size_t idx, int64_t v) {
+        stack_base[idx].type = ValType::I64;
+        stack_base[idx].i64 = v;
+    };
+    auto set_f32 = [&](size_t idx, float v) {
+        stack_base[idx].type = ValType::F32;
+        stack_base[idx].f32 = v;
+    };
+    auto set_f64 = [&](size_t idx, double v) {
+        stack_base[idx].type = ValType::F64;
+        stack_base[idx].f64 = v;
+    };
+    auto set_handle = [&](size_t idx, FatHandle h) {
+        stack_base[idx].type = ValType::Handle;
+        stack_base[idx].handle = h;
+    };
 
     auto do_branch = [&](uint32_t target_pc, uint16_t arity, uint32_t drop_count) {
         if (drop_count > 0) {
@@ -203,6 +310,51 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         pc = func->code.data() + target_pc;
     };
 
+    auto dispatch_call = [&](const FuncRef& target) {
+        if (target.is_host()) {
+            const HostFuncEntry* host = target.host;
+            size_t nparams = host->sig.params.size();
+            std::vector<Value> hargs(nparams);
+            for (size_t k = 0; k < nparams; ++k) {
+                hargs[k] = stack_base[sp - nparams + k];
+            }
+            // Keep args rooted on stack while host executes in case it triggers GC!
+            activeSp_ = sp;
+            std::vector<Value> hres = host->fn(store, hargs);
+            sp -= nparams;
+            for (const auto& r : hres) {
+                stack_base[sp++] = r;
+            }
+            activeSp_ = sp;
+            return;
+        }
+
+        if (frames_.size() >= maxCallDepth_) {
+            throw Trap("call stack overflow");
+        }
+        frames_.back().pc = pc;
+
+        ModuleInstance* next_inst = target.instance;
+        const CompiledFunc* callee = &next_inst->module().funcs[target.localFuncIdx];
+        size_t new_locals_base = sp - callee->paramCount;
+        size_t extra_locals = callee->locals.size() - callee->paramCount;
+        if (sp + extra_locals + 64 >= maxStack_) {
+            throw Trap("operand stack overflow");
+        }
+        for (size_t k = callee->paramCount; k < callee->locals.size(); ++k) {
+            stack_base[sp++] = Value::zero(callee->locals[k]);
+        }
+
+        cur_inst = next_inst;
+        func = callee;
+        pc = callee->code.data();
+        locals_base = new_locals_base;
+        locals = stack_base + locals_base;
+        globals = cur_inst->globals().data();
+        str_handles = cur_inst->string_handles().data();
+        frames_.push_back(CallFrame{cur_inst, func, pc, locals_base, sp});
+    };
+
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
@@ -215,6 +367,7 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         &&L_BrTable,
         &&L_Return,
         &&L_Call,
+        &&L_CallIndirect,
         &&L_Drop,
         &&L_Select,
         &&L_LocalGet,
@@ -232,6 +385,7 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         &&L_MemSpan,
         &&L_MemRefSpan,
         &&L_MemReadOnly,
+        &&L_MemCloneSpan,
         &&L_MemByteLen,
         &&L_MemRefLen,
         &&L_MemIsReadOnly,
@@ -350,34 +504,39 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
             return results;
         }
         const CallFrame& prev = frames_.back();
+        cur_inst = prev.inst;
         func = prev.func;
         pc = prev.pc;
         locals_base = prev.localsBase;
         locals = stack_base + locals_base;
+        globals = cur_inst->globals().data();
+        str_handles = cur_inst->string_handles().data();
         DISPATCH();
     }
 
     CASE_OP(Call) {
-        if (frames_.size() >= maxCallDepth_) {
-            throw Trap("call stack overflow");
-        }
-        // Save caller's resume PC
-        frames_.back().pc = pc;
+        dispatch_call(cur_inst->func_ref(ins->imm.u32));
+        DISPATCH();
+    }
 
-        const CompiledFunc* callee = &mod.funcs[ins->imm.u32];
-        size_t new_locals_base = sp - callee->paramCount;
-        size_t extra_locals = callee->locals.size() - callee->paramCount;
-        if (sp + extra_locals + 64 >= maxStack_) {
-            throw Trap("operand stack overflow");
+    CASE_OP(CallIndirect) {
+        uint32_t elem_idx = static_cast<uint32_t>(stack_base[--sp].i32);
+        const FuncTable& tbl = cur_inst->table(ins->aux);
+        if (elem_idx >= tbl.elements.size()) {
+            throw Trap("call_indirect table index out of bounds");
         }
-        for (size_t k = callee->paramCount; k < callee->locals.size(); ++k) {
-            stack_base[sp++] = Value::zero(callee->locals[k]);
+        const FuncRef& target = tbl.elements[elem_idx];
+        if (target.is_null()) {
+            throw Trap("call_indirect uninitialized table element");
         }
-        func = callee;
-        pc = callee->code.data();
-        locals_base = new_locals_base;
-        locals = stack_base + locals_base;
-        frames_.push_back(CallFrame{func, pc, locals_base, sp});
+        const FuncSignature& expected_sig = cur_inst->module().types[ins->imm.u32];
+        const FuncSignature& actual_sig =
+            target.is_host() ? target.host->sig
+                             : target.instance->module().funcs[target.localFuncIdx].sig;
+        if (actual_sig != expected_sig) {
+            throw Trap("call_indirect signature mismatch");
+        }
+        dispatch_call(target);
         DISPATCH();
     }
 
@@ -415,69 +574,89 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         DISPATCH();
 
     CASE_OP(I32Const)
-        stack_base[sp++].i32 = ins->imm.i32;
+        set_i32(sp++, ins->imm.i32);
         DISPATCH();
 
     CASE_OP(I64Const)
-        stack_base[sp++].i64 = ins->imm.i64;
+        set_i64(sp++, ins->imm.i64);
         DISPATCH();
 
     CASE_OP(F32Const)
-        stack_base[sp++].f32 = ins->imm.f32;
+        set_f32(sp++, ins->imm.f32);
         DISPATCH();
 
     CASE_OP(F64Const)
-        stack_base[sp++].f64 = ins->imm.f64;
+        set_f64(sp++, ins->imm.f64);
         DISPATCH();
 
     CASE_OP(HandleNull)
-        stack_base[sp++].handle = FatHandle::null();
+        set_handle(sp++, FatHandle::null());
         DISPATCH();
 
     CASE_OP(MemConstStr)
-        stack_base[sp++].handle = str_handles[ins->imm.u32];
+        set_handle(sp++, str_handles[ins->imm.u32]);
         DISPATCH();
 
-    // --- Native Split-Block Memory Opcodes ---
+    // --- Native Split-Block Memory Opcodes (GC-safepointed!) ---
 
     CASE_OP(MemAlloc) {
-        int32_t num_refs  = stack_base[--sp].i32;
-        int32_t num_bytes = stack_base[--sp].i32;
+        int32_t num_refs  = stack_base[sp - 1].i32;
+        int32_t num_bytes = stack_base[sp - 2].i32;
         if (num_bytes < 0 || num_refs < 0) {
             throw Trap("mem.alloc negative size");
         }
-        stack_base[sp++].handle = store.alloc(static_cast<uint32_t>(num_bytes),
-                                              static_cast<uint32_t>(num_refs));
+        sp -= 2;
+        activeSp_ = sp; // GC safepoint: all live handles below sp are traced
+        FatHandle res = store.alloc(static_cast<uint32_t>(num_bytes),
+                                    static_cast<uint32_t>(num_refs));
+        set_handle(sp++, res);
         DISPATCH();
     }
 
     CASE_OP(MemSpan) {
-        int32_t byte_len = stack_base[--sp].i32;
-        int32_t byte_off = stack_base[--sp].i32;
-        FatHandle h      = stack_base[--sp].handle;
+        int32_t byte_len = stack_base[sp - 1].i32;
+        int32_t byte_off = stack_base[sp - 2].i32;
+        FatHandle h      = stack_base[sp - 3].handle;
         if (byte_off < 0 || byte_len < 0) {
             throw Trap("mem.span negative offset or length");
         }
-        stack_base[sp++].handle = store.make_span(h.id, static_cast<uint32_t>(byte_off),
-                                                  static_cast<uint32_t>(byte_len));
+        // Keep `h` rooted at stack_base[sp - 3] during store.make_span in case GC runs!
+        activeSp_ = sp - 2;
+        FatHandle res = store.make_span(h.id, static_cast<uint32_t>(byte_off),
+                                        static_cast<uint32_t>(byte_len));
+        sp -= 2;
+        set_handle(sp - 1, res);
         DISPATCH();
     }
 
     CASE_OP(MemRefSpan) {
-        int32_t ref_len = stack_base[--sp].i32;
-        int32_t ref_off = stack_base[--sp].i32;
-        FatHandle h     = stack_base[--sp].handle;
+        int32_t ref_len = stack_base[sp - 1].i32;
+        int32_t ref_off = stack_base[sp - 2].i32;
+        FatHandle h     = stack_base[sp - 3].handle;
         if (ref_off < 0 || ref_len < 0) {
             throw Trap("mem.ref_span negative offset or length");
         }
-        stack_base[sp++].handle = store.make_ref_span(h.id, static_cast<uint32_t>(ref_off),
-                                                      static_cast<uint32_t>(ref_len));
+        activeSp_ = sp - 2;
+        FatHandle res = store.make_ref_span(h.id, static_cast<uint32_t>(ref_off),
+                                            static_cast<uint32_t>(ref_len));
+        sp -= 2;
+        set_handle(sp - 1, res);
         DISPATCH();
     }
 
     CASE_OP(MemReadOnly) {
         FatHandle h = stack_base[sp - 1].handle;
-        stack_base[sp - 1].handle = store.as_readonly(h.id);
+        activeSp_ = sp; // `h` remains rooted at sp - 1 during GC
+        FatHandle res = store.as_readonly(h.id);
+        set_handle(sp - 1, res);
+        DISPATCH();
+    }
+
+    CASE_OP(MemCloneSpan) {
+        FatHandle h = stack_base[sp - 1].handle;
+        activeSp_ = sp; // `h` remains rooted at sp - 1 during GC
+        FatHandle res = store.clone_span(h.id);
+        set_handle(sp - 1, res);
         DISPATCH();
     }
 
@@ -486,13 +665,13 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         if ((h.flags & kFlagValid) == 0) {
             throw Trap("mem.byte_len on null handle");
         }
-        stack_base[sp - 1].i32 = static_cast<int32_t>(h.byteSize);
+        set_i32(sp - 1, static_cast<int32_t>(h.byteSize));
         DISPATCH();
     }
 
     CASE_OP(MemRefLen) {
         FatHandle h = stack_base[sp - 1].handle;
-        stack_base[sp - 1].i32 = static_cast<int32_t>(store.ref_len(h.id));
+        set_i32(sp - 1, static_cast<int32_t>(store.ref_len(h.id)));
         DISPATCH();
     }
 
@@ -501,20 +680,20 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         if ((h.flags & kFlagValid) == 0) {
             throw Trap("mem.is_readonly on null handle");
         }
-        stack_base[sp - 1].i32 = ((h.flags & kFlagReadOnly) != 0) ? 1 : 0;
+        set_i32(sp - 1, ((h.flags & kFlagReadOnly) != 0) ? 1 : 0);
         DISPATCH();
     }
 
     CASE_OP(MemIsNull) {
         FatHandle h = stack_base[sp - 1].handle;
-        stack_base[sp - 1].i32 = h.is_null() ? 1 : 0;
+        set_i32(sp - 1, h.is_null() ? 1 : 0);
         DISPATCH();
     }
 
     CASE_OP(MemEq) {
         FatHandle b = stack_base[--sp].handle;
         FatHandle a = stack_base[sp - 1].handle;
-        stack_base[sp - 1].i32 = (a.id == b.id) ? 1 : 0;
+        set_i32(sp - 1, (a.id == b.id) ? 1 : 0);
         DISPATCH();
     }
 
@@ -523,56 +702,56 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
     CASE_OP(MemReadU8) {
         uint32_t off = static_cast<uint32_t>(stack_base[--sp].i32);
         FatHandle h  = stack_base[sp - 1].handle;
-        stack_base[sp - 1].i32 = static_cast<int32_t>(fat_read<uint8_t>(h, off));
+        set_i32(sp - 1, static_cast<int32_t>(fat_read<uint8_t>(h, off)));
         DISPATCH();
     }
 
     CASE_OP(MemReadI8) {
         uint32_t off = static_cast<uint32_t>(stack_base[--sp].i32);
         FatHandle h  = stack_base[sp - 1].handle;
-        stack_base[sp - 1].i32 = static_cast<int32_t>(fat_read<int8_t>(h, off));
+        set_i32(sp - 1, static_cast<int32_t>(fat_read<int8_t>(h, off)));
         DISPATCH();
     }
 
     CASE_OP(MemReadU16) {
         uint32_t off = static_cast<uint32_t>(stack_base[--sp].i32);
         FatHandle h  = stack_base[sp - 1].handle;
-        stack_base[sp - 1].i32 = static_cast<int32_t>(fat_read<uint16_t>(h, off));
+        set_i32(sp - 1, static_cast<int32_t>(fat_read<uint16_t>(h, off)));
         DISPATCH();
     }
 
     CASE_OP(MemReadI16) {
         uint32_t off = static_cast<uint32_t>(stack_base[--sp].i32);
         FatHandle h  = stack_base[sp - 1].handle;
-        stack_base[sp - 1].i32 = static_cast<int32_t>(fat_read<int16_t>(h, off));
+        set_i32(sp - 1, static_cast<int32_t>(fat_read<int16_t>(h, off)));
         DISPATCH();
     }
 
     CASE_OP(MemReadI32) {
         uint32_t off = static_cast<uint32_t>(stack_base[--sp].i32);
         FatHandle h  = stack_base[sp - 1].handle;
-        stack_base[sp - 1].i32 = fat_read<int32_t>(h, off);
+        set_i32(sp - 1, fat_read<int32_t>(h, off));
         DISPATCH();
     }
 
     CASE_OP(MemReadI64) {
         uint32_t off = static_cast<uint32_t>(stack_base[--sp].i32);
         FatHandle h  = stack_base[sp - 1].handle;
-        stack_base[sp - 1].i64 = fat_read<int64_t>(h, off);
+        set_i64(sp - 1, fat_read<int64_t>(h, off));
         DISPATCH();
     }
 
     CASE_OP(MemReadF32) {
         uint32_t off = static_cast<uint32_t>(stack_base[--sp].i32);
         FatHandle h  = stack_base[sp - 1].handle;
-        stack_base[sp - 1].f32 = fat_read<float>(h, off);
+        set_f32(sp - 1, fat_read<float>(h, off));
         DISPATCH();
     }
 
     CASE_OP(MemReadF64) {
         uint32_t off = static_cast<uint32_t>(stack_base[--sp].i32);
         FatHandle h  = stack_base[sp - 1].handle;
-        stack_base[sp - 1].f64 = fat_read<double>(h, off);
+        set_f64(sp - 1, fat_read<double>(h, off));
         DISPATCH();
     }
 
@@ -631,7 +810,7 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
     CASE_OP(MemReadRef) {
         uint32_t slot = static_cast<uint32_t>(stack_base[--sp].i32);
         FatHandle h   = stack_base[sp - 1].handle;
-        stack_base[sp - 1].handle = store.read_ref(h.id, slot);
+        set_handle(sp - 1, store.read_ref(h.id, slot));
         DISPATCH();
     }
 
@@ -701,21 +880,21 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
             throw Trap("mem.cmp out of bounds");
         }
         int cmp = (len == 0) ? 0 : std::memcmp(a.ptr + a_off, b.ptr + b_off, len);
-        stack_base[sp - 1].i32 = (cmp < 0) ? -1 : ((cmp > 0) ? 1 : 0);
+        set_i32(sp - 1, (cmp < 0) ? -1 : ((cmp > 0) ? 1 : 0));
         DISPATCH();
     }
 
     // --- i32 ops ---
 
     CASE_OP(I32Eqz)
-        stack_base[sp - 1].i32 = (stack_base[sp - 1].i32 == 0) ? 1 : 0;
+        set_i32(sp - 1, (stack_base[sp - 1].i32 == 0) ? 1 : 0);
         DISPATCH();
 
     #define I32_BINOP(name, expr) \
         CASE_OP(name) { \
             int32_t b = stack_base[--sp].i32; \
             int32_t a = stack_base[sp - 1].i32; \
-            stack_base[sp - 1].i32 = (expr); \
+            set_i32(sp - 1, (expr)); \
             DISPATCH(); \
         }
 
@@ -731,13 +910,13 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
     I32_BINOP(I32GeU, static_cast<uint32_t>(a) >= static_cast<uint32_t>(b) ? 1 : 0)
 
     CASE_OP(I32Clz)
-        stack_base[sp - 1].i32 = std::countl_zero(static_cast<uint32_t>(stack_base[sp - 1].i32));
+        set_i32(sp - 1, std::countl_zero(static_cast<uint32_t>(stack_base[sp - 1].i32)));
         DISPATCH();
     CASE_OP(I32Ctz)
-        stack_base[sp - 1].i32 = std::countr_zero(static_cast<uint32_t>(stack_base[sp - 1].i32));
+        set_i32(sp - 1, std::countr_zero(static_cast<uint32_t>(stack_base[sp - 1].i32)));
         DISPATCH();
     CASE_OP(I32Popcnt)
-        stack_base[sp - 1].i32 = std::popcount(static_cast<uint32_t>(stack_base[sp - 1].i32));
+        set_i32(sp - 1, std::popcount(static_cast<uint32_t>(stack_base[sp - 1].i32)));
         DISPATCH();
 
     I32_BINOP(I32Add, static_cast<int32_t>(static_cast<uint32_t>(a) + static_cast<uint32_t>(b)))
@@ -749,28 +928,28 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         int32_t a = stack_base[sp - 1].i32;
         if (b == 0) throw Trap("integer divide by zero");
         if (a == std::numeric_limits<int32_t>::min() && b == -1) throw Trap("integer overflow");
-        stack_base[sp - 1].i32 = a / b;
+        set_i32(sp - 1, a / b);
         DISPATCH();
     }
     CASE_OP(I32DivU) {
         uint32_t b = static_cast<uint32_t>(stack_base[--sp].i32);
         uint32_t a = static_cast<uint32_t>(stack_base[sp - 1].i32);
         if (b == 0) throw Trap("integer divide by zero");
-        stack_base[sp - 1].i32 = static_cast<int32_t>(a / b);
+        set_i32(sp - 1, static_cast<int32_t>(a / b));
         DISPATCH();
     }
     CASE_OP(I32RemS) {
         int32_t b = stack_base[--sp].i32;
         int32_t a = stack_base[sp - 1].i32;
         if (b == 0) throw Trap("integer divide by zero");
-        stack_base[sp - 1].i32 = (a == std::numeric_limits<int32_t>::min() && b == -1) ? 0 : (a % b);
+        set_i32(sp - 1, (a == std::numeric_limits<int32_t>::min() && b == -1) ? 0 : (a % b));
         DISPATCH();
     }
     CASE_OP(I32RemU) {
         uint32_t b = static_cast<uint32_t>(stack_base[--sp].i32);
         uint32_t a = static_cast<uint32_t>(stack_base[sp - 1].i32);
         if (b == 0) throw Trap("integer divide by zero");
-        stack_base[sp - 1].i32 = static_cast<int32_t>(a % b);
+        set_i32(sp - 1, static_cast<int32_t>(a % b));
         DISPATCH();
     }
 
@@ -788,21 +967,21 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
     // --- i64 ops ---
 
     CASE_OP(I64Eqz)
-        stack_base[sp - 1].i32 = (stack_base[sp - 1].i64 == 0) ? 1 : 0;
+        set_i32(sp - 1, (stack_base[sp - 1].i64 == 0) ? 1 : 0);
         DISPATCH();
 
     #define I64_CMPOP(name, expr) \
         CASE_OP(name) { \
             int64_t b = stack_base[--sp].i64; \
             int64_t a = stack_base[sp - 1].i64; \
-            stack_base[sp - 1].i32 = (expr); \
+            set_i32(sp - 1, (expr)); \
             DISPATCH(); \
         }
     #define I64_BINOP(name, expr) \
         CASE_OP(name) { \
             int64_t b = stack_base[--sp].i64; \
             int64_t a = stack_base[sp - 1].i64; \
-            stack_base[sp - 1].i64 = (expr); \
+            set_i64(sp - 1, (expr)); \
             DISPATCH(); \
         }
 
@@ -818,13 +997,13 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
     I64_CMPOP(I64GeU, static_cast<uint64_t>(a) >= static_cast<uint64_t>(b) ? 1 : 0)
 
     CASE_OP(I64Clz)
-        stack_base[sp - 1].i64 = std::countl_zero(static_cast<uint64_t>(stack_base[sp - 1].i64));
+        set_i64(sp - 1, std::countl_zero(static_cast<uint64_t>(stack_base[sp - 1].i64)));
         DISPATCH();
     CASE_OP(I64Ctz)
-        stack_base[sp - 1].i64 = std::countr_zero(static_cast<uint64_t>(stack_base[sp - 1].i64));
+        set_i64(sp - 1, std::countr_zero(static_cast<uint64_t>(stack_base[sp - 1].i64)));
         DISPATCH();
     CASE_OP(I64Popcnt)
-        stack_base[sp - 1].i64 = std::popcount(static_cast<uint64_t>(stack_base[sp - 1].i64));
+        set_i64(sp - 1, std::popcount(static_cast<uint64_t>(stack_base[sp - 1].i64)));
         DISPATCH();
 
     I64_BINOP(I64Add, static_cast<int64_t>(static_cast<uint64_t>(a) + static_cast<uint64_t>(b)))
@@ -836,28 +1015,28 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         int64_t a = stack_base[sp - 1].i64;
         if (b == 0) throw Trap("integer divide by zero");
         if (a == std::numeric_limits<int64_t>::min() && b == -1) throw Trap("integer overflow");
-        stack_base[sp - 1].i64 = a / b;
+        set_i64(sp - 1, a / b);
         DISPATCH();
     }
     CASE_OP(I64DivU) {
         uint64_t b = static_cast<uint64_t>(stack_base[--sp].i64);
         uint64_t a = static_cast<uint64_t>(stack_base[sp - 1].i64);
         if (b == 0) throw Trap("integer divide by zero");
-        stack_base[sp - 1].i64 = static_cast<int64_t>(a / b);
+        set_i64(sp - 1, static_cast<int64_t>(a / b));
         DISPATCH();
     }
     CASE_OP(I64RemS) {
         int64_t b = stack_base[--sp].i64;
         int64_t a = stack_base[sp - 1].i64;
         if (b == 0) throw Trap("integer divide by zero");
-        stack_base[sp - 1].i64 = (a == std::numeric_limits<int64_t>::min() && b == -1) ? 0 : (a % b);
+        set_i64(sp - 1, (a == std::numeric_limits<int64_t>::min() && b == -1) ? 0 : (a % b));
         DISPATCH();
     }
     CASE_OP(I64RemU) {
         uint64_t b = static_cast<uint64_t>(stack_base[--sp].i64);
         uint64_t a = static_cast<uint64_t>(stack_base[sp - 1].i64);
         if (b == 0) throw Trap("integer divide by zero");
-        stack_base[sp - 1].i64 = static_cast<int64_t>(a % b);
+        set_i64(sp - 1, static_cast<int64_t>(a % b));
         DISPATCH();
     }
 
@@ -879,20 +1058,20 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         CASE_OP(name) { \
             float b = stack_base[--sp].f32; \
             float a = stack_base[sp - 1].f32; \
-            stack_base[sp - 1].i32 = (expr) ? 1 : 0; \
+            set_i32(sp - 1, (expr) ? 1 : 0); \
             DISPATCH(); \
         }
     #define F32_UNOP(name, expr) \
         CASE_OP(name) { \
             float a = stack_base[sp - 1].f32; \
-            stack_base[sp - 1].f32 = (expr); \
+            set_f32(sp - 1, (expr)); \
             DISPATCH(); \
         }
     #define F32_BINOP(name, expr) \
         CASE_OP(name) { \
             float b = stack_base[--sp].f32; \
             float a = stack_base[sp - 1].f32; \
-            stack_base[sp - 1].f32 = (expr); \
+            set_f32(sp - 1, (expr)); \
             DISPATCH(); \
         }
 
@@ -929,20 +1108,20 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         CASE_OP(name) { \
             double b = stack_base[--sp].f64; \
             double a = stack_base[sp - 1].f64; \
-            stack_base[sp - 1].i32 = (expr) ? 1 : 0; \
+            set_i32(sp - 1, (expr) ? 1 : 0); \
             DISPATCH(); \
         }
     #define F64_UNOP(name, expr) \
         CASE_OP(name) { \
             double a = stack_base[sp - 1].f64; \
-            stack_base[sp - 1].f64 = (expr); \
+            set_f64(sp - 1, (expr)); \
             DISPATCH(); \
         }
     #define F64_BINOP(name, expr) \
         CASE_OP(name) { \
             double b = stack_base[--sp].f64; \
             double a = stack_base[sp - 1].f64; \
-            stack_base[sp - 1].f64 = (expr); \
+            set_f64(sp - 1, (expr)); \
             DISPATCH(); \
         }
 
@@ -976,94 +1155,94 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
     // --- Conversions & Reinterpretations ---
 
     CASE_OP(I32WrapI64)
-        stack_base[sp - 1].i32 = static_cast<int32_t>(stack_base[sp - 1].i64);
+        set_i32(sp - 1, static_cast<int32_t>(stack_base[sp - 1].i64));
         DISPATCH();
     CASE_OP(I64ExtendI32S)
-        stack_base[sp - 1].i64 = static_cast<int64_t>(stack_base[sp - 1].i32);
+        set_i64(sp - 1, static_cast<int64_t>(stack_base[sp - 1].i32));
         DISPATCH();
     CASE_OP(I64ExtendI32U)
-        stack_base[sp - 1].i64 = static_cast<int64_t>(static_cast<uint32_t>(stack_base[sp - 1].i32));
+        set_i64(sp - 1, static_cast<int64_t>(static_cast<uint32_t>(stack_base[sp - 1].i32)));
         DISPATCH();
     CASE_OP(I32TruncF32S)
-        stack_base[sp - 1].i32 = trunc_f32_s(stack_base[sp - 1].f32);
+        set_i32(sp - 1, trunc_f32_s(stack_base[sp - 1].f32));
         DISPATCH();
     CASE_OP(I32TruncF32U)
-        stack_base[sp - 1].i32 = trunc_f32_u(stack_base[sp - 1].f32);
+        set_i32(sp - 1, trunc_f32_u(stack_base[sp - 1].f32));
         DISPATCH();
     CASE_OP(I32TruncF64S)
-        stack_base[sp - 1].i32 = trunc_f64_s(stack_base[sp - 1].f64);
+        set_i32(sp - 1, trunc_f64_s(stack_base[sp - 1].f64));
         DISPATCH();
     CASE_OP(I32TruncF64U)
-        stack_base[sp - 1].i32 = trunc_f64_u(stack_base[sp - 1].f64);
+        set_i32(sp - 1, trunc_f64_u(stack_base[sp - 1].f64));
         DISPATCH();
     CASE_OP(I64TruncF32S)
-        stack_base[sp - 1].i64 = trunc_f32_i64_s(stack_base[sp - 1].f32);
+        set_i64(sp - 1, trunc_f32_i64_s(stack_base[sp - 1].f32));
         DISPATCH();
     CASE_OP(I64TruncF32U)
-        stack_base[sp - 1].i64 = trunc_f32_i64_u(stack_base[sp - 1].f32);
+        set_i64(sp - 1, trunc_f32_i64_u(stack_base[sp - 1].f32));
         DISPATCH();
     CASE_OP(I64TruncF64S)
-        stack_base[sp - 1].i64 = trunc_f64_i64_s(stack_base[sp - 1].f64);
+        set_i64(sp - 1, trunc_f64_i64_s(stack_base[sp - 1].f64));
         DISPATCH();
     CASE_OP(I64TruncF64U)
-        stack_base[sp - 1].i64 = trunc_f64_i64_u(stack_base[sp - 1].f64);
+        set_i64(sp - 1, trunc_f64_i64_u(stack_base[sp - 1].f64));
         DISPATCH();
     CASE_OP(F32ConvertI32S)
-        stack_base[sp - 1].f32 = static_cast<float>(stack_base[sp - 1].i32);
+        set_f32(sp - 1, static_cast<float>(stack_base[sp - 1].i32));
         DISPATCH();
     CASE_OP(F32ConvertI32U)
-        stack_base[sp - 1].f32 = static_cast<float>(static_cast<uint32_t>(stack_base[sp - 1].i32));
+        set_f32(sp - 1, static_cast<float>(static_cast<uint32_t>(stack_base[sp - 1].i32)));
         DISPATCH();
     CASE_OP(F32ConvertI64S)
-        stack_base[sp - 1].f32 = static_cast<float>(stack_base[sp - 1].i64);
+        set_f32(sp - 1, static_cast<float>(stack_base[sp - 1].i64));
         DISPATCH();
     CASE_OP(F32ConvertI64U)
-        stack_base[sp - 1].f32 = static_cast<float>(static_cast<uint64_t>(stack_base[sp - 1].i64));
+        set_f32(sp - 1, static_cast<float>(static_cast<uint64_t>(stack_base[sp - 1].i64)));
         DISPATCH();
     CASE_OP(F64ConvertI32S)
-        stack_base[sp - 1].f64 = static_cast<double>(stack_base[sp - 1].i32);
+        set_f64(sp - 1, static_cast<double>(stack_base[sp - 1].i32));
         DISPATCH();
     CASE_OP(F64ConvertI32U)
-        stack_base[sp - 1].f64 = static_cast<double>(static_cast<uint32_t>(stack_base[sp - 1].i32));
+        set_f64(sp - 1, static_cast<double>(static_cast<uint32_t>(stack_base[sp - 1].i32)));
         DISPATCH();
     CASE_OP(F64ConvertI64S)
-        stack_base[sp - 1].f64 = static_cast<double>(stack_base[sp - 1].i64);
+        set_f64(sp - 1, static_cast<double>(stack_base[sp - 1].i64));
         DISPATCH();
     CASE_OP(F64ConvertI64U)
-        stack_base[sp - 1].f64 = static_cast<double>(static_cast<uint64_t>(stack_base[sp - 1].i64));
+        set_f64(sp - 1, static_cast<double>(static_cast<uint64_t>(stack_base[sp - 1].i64)));
         DISPATCH();
     CASE_OP(F32DemoteF64)
-        stack_base[sp - 1].f32 = static_cast<float>(stack_base[sp - 1].f64);
+        set_f32(sp - 1, static_cast<float>(stack_base[sp - 1].f64));
         DISPATCH();
     CASE_OP(F64PromoteF32)
-        stack_base[sp - 1].f64 = static_cast<double>(stack_base[sp - 1].f32);
+        set_f64(sp - 1, static_cast<double>(stack_base[sp - 1].f32));
         DISPATCH();
     CASE_OP(I32ReinterpretF32)
-        stack_base[sp - 1].i32 = std::bit_cast<int32_t>(stack_base[sp - 1].f32);
+        set_i32(sp - 1, std::bit_cast<int32_t>(stack_base[sp - 1].f32));
         DISPATCH();
     CASE_OP(I64ReinterpretF64)
-        stack_base[sp - 1].i64 = std::bit_cast<int64_t>(stack_base[sp - 1].f64);
+        set_i64(sp - 1, std::bit_cast<int64_t>(stack_base[sp - 1].f64));
         DISPATCH();
     CASE_OP(F32ReinterpretI32)
-        stack_base[sp - 1].f32 = std::bit_cast<float>(stack_base[sp - 1].i32);
+        set_f32(sp - 1, std::bit_cast<float>(stack_base[sp - 1].i32));
         DISPATCH();
     CASE_OP(F64ReinterpretI64)
-        stack_base[sp - 1].f64 = std::bit_cast<double>(stack_base[sp - 1].i64);
+        set_f64(sp - 1, std::bit_cast<double>(stack_base[sp - 1].i64));
         DISPATCH();
     CASE_OP(I32Extend8S)
-        stack_base[sp - 1].i32 = static_cast<int32_t>(static_cast<int8_t>(stack_base[sp - 1].i32));
+        set_i32(sp - 1, static_cast<int32_t>(static_cast<int8_t>(stack_base[sp - 1].i32)));
         DISPATCH();
     CASE_OP(I32Extend16S)
-        stack_base[sp - 1].i32 = static_cast<int32_t>(static_cast<int16_t>(stack_base[sp - 1].i32));
+        set_i32(sp - 1, static_cast<int32_t>(static_cast<int16_t>(stack_base[sp - 1].i32)));
         DISPATCH();
     CASE_OP(I64Extend8S)
-        stack_base[sp - 1].i64 = static_cast<int64_t>(static_cast<int8_t>(stack_base[sp - 1].i64));
+        set_i64(sp - 1, static_cast<int64_t>(static_cast<int8_t>(stack_base[sp - 1].i64)));
         DISPATCH();
     CASE_OP(I64Extend16S)
-        stack_base[sp - 1].i64 = static_cast<int64_t>(static_cast<int16_t>(stack_base[sp - 1].i64));
+        set_i64(sp - 1, static_cast<int64_t>(static_cast<int16_t>(stack_base[sp - 1].i64)));
         DISPATCH();
     CASE_OP(I64Extend32S)
-        stack_base[sp - 1].i64 = static_cast<int64_t>(static_cast<int32_t>(stack_base[sp - 1].i64));
+        set_i64(sp - 1, static_cast<int64_t>(static_cast<int32_t>(stack_base[sp - 1].i64)));
         DISPATCH();
 
 #if defined(__GNUC__) || defined(__clang__)

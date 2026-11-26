@@ -1,5 +1,6 @@
 #include "optrich/memory_store.hpp"
 
+#include <algorithm>
 #include <cstring>
 
 namespace optrich {
@@ -7,6 +8,18 @@ namespace optrich {
 MemoryStore::MemoryStore() {
     // Slot 0 is permanently reserved for kNullHandle.
     objects_.emplace_back();
+}
+
+void MemoryStore::maybe_trigger_gc() {
+    if (gcThreshold_ > 0 && liveCount_ >= gcThreshold_ && gcCallback_ && !inGc_) {
+        inGc_ = true;
+        gcCallback_();
+        inGc_ = false;
+        // Dynamically grow threshold if live set is large to avoid thrashing.
+        if (liveCount_ >= gcThreshold_) {
+            gcThreshold_ = std::max(gcThreshold_ * 2, liveCount_ * 2);
+        }
+    }
 }
 
 HandleId MemoryStore::allocate_slot() {
@@ -67,6 +80,7 @@ FatHandle MemoryStore::to_fat_handle(HandleId h) const {
 }
 
 FatHandle MemoryStore::alloc(uint32_t num_bytes, uint32_t num_refs, bool read_only) {
+    maybe_trigger_gc();
     HandleId id = allocate_slot();
     MemoryBlock& blk = objects_[id];
     blk.bytes.assign(num_bytes, 0);
@@ -84,6 +98,7 @@ FatHandle MemoryStore::alloc(uint32_t num_bytes, uint32_t num_refs, bool read_on
 }
 
 FatHandle MemoryStore::alloc_readonly_bytes(std::string_view data) {
+    maybe_trigger_gc();
     uint32_t len = static_cast<uint32_t>(data.size());
     HandleId id = allocate_slot();
     MemoryBlock& blk = objects_[id];
@@ -104,6 +119,7 @@ FatHandle MemoryStore::alloc_readonly_bytes(std::string_view data) {
 }
 
 FatHandle MemoryStore::make_span(HandleId h, uint32_t byte_off, uint32_t byte_len) {
+    maybe_trigger_gc();
     const MemoryBlock& src = get_block(h);
     if (static_cast<uint64_t>(byte_off) + static_cast<uint64_t>(byte_len) > src.byteSize) {
         throw Trap("mem.span out of bounds");
@@ -128,6 +144,7 @@ FatHandle MemoryStore::make_span(HandleId h, uint32_t byte_off, uint32_t byte_le
 }
 
 FatHandle MemoryStore::make_ref_span(HandleId h, uint32_t ref_off, uint32_t ref_len) {
+    maybe_trigger_gc();
     const MemoryBlock& src = get_block(h);
     if (static_cast<uint64_t>(ref_off) + static_cast<uint64_t>(ref_len) > src.refCount) {
         throw Trap("mem.ref_span out of bounds");
@@ -152,6 +169,7 @@ FatHandle MemoryStore::make_ref_span(HandleId h, uint32_t ref_off, uint32_t ref_
 }
 
 FatHandle MemoryStore::as_readonly(HandleId h) {
+    maybe_trigger_gc();
     const MemoryBlock& src = get_block(h);
     HandleId root = (src.rootHandle != kNullHandle) ? src.rootHandle : h;
     uint32_t b_off = src.byteOffset;
@@ -169,6 +187,42 @@ FatHandle MemoryStore::as_readonly(HandleId h) {
     view.readOnly = true;
     view.marked = false;
     view.alive = true;
+    ++liveCount_;
+    return to_fat_handle(id);
+}
+
+FatHandle MemoryStore::clone_span(HandleId h) {
+    maybe_trigger_gc();
+    const MemoryBlock& src = get_block(h);
+    const MemoryBlock& root = get_root(src);
+
+    uint32_t b_off = src.byteOffset;
+    uint32_t b_sz  = src.byteSize;
+    uint32_t r_off = src.refOffset;
+    uint32_t r_cnt = src.refCount;
+    bool ro        = src.readOnly;
+
+    std::vector<uint8_t> bytes_copy(b_sz);
+    if (b_sz > 0) {
+        std::memcpy(bytes_copy.data(), root.bytes.data() + b_off, b_sz);
+    }
+    std::vector<HandleId> refs_copy(r_cnt);
+    if (r_cnt > 0) {
+        std::copy_n(root.refs.data() + r_off, r_cnt, refs_copy.data());
+    }
+
+    HandleId id = allocate_slot();
+    MemoryBlock& cloned = objects_[id];
+    cloned.bytes = std::move(bytes_copy);
+    cloned.refs = std::move(refs_copy);
+    cloned.rootHandle = kNullHandle;
+    cloned.byteOffset = 0;
+    cloned.byteSize = b_sz;
+    cloned.refOffset = 0;
+    cloned.refCount = r_cnt;
+    cloned.readOnly = ro;
+    cloned.marked = false;
+    cloned.alive = true;
     ++liveCount_;
     return to_fat_handle(id);
 }
@@ -240,6 +294,93 @@ void MemoryStore::write_bytes(HandleId h, uint32_t byte_off, const void* src, ui
     if (len == 0) return;
     MemoryBlock& root = get_root_mut(blk);
     std::memcpy(root.bytes.data() + blk.byteOffset + byte_off, src, len);
+}
+
+void MemoryStore::pin(HandleId h) {
+    if (h == kNullHandle) return;
+    (void)get_block(h); // validate alive
+    ++pinned_[h];
+}
+
+void MemoryStore::unpin(HandleId h) {
+    if (h == kNullHandle) return;
+    auto it = pinned_.find(h);
+    if (it != pinned_.end()) {
+        if (--it->second == 0) {
+            pinned_.erase(it);
+        }
+    }
+}
+
+bool MemoryStore::is_pinned(HandleId h) const {
+    return pinned_.find(h) != pinned_.end();
+}
+
+GCStats MemoryStore::collect_garbage(const std::vector<HandleId>& roots) {
+    GCStats stats;
+    std::vector<HandleId> worklist;
+    worklist.reserve(roots.size() + pinned_.size());
+
+    for (HandleId h : roots) {
+        if (h != kNullHandle) worklist.push_back(h);
+    }
+    for (const auto& [h, count] : pinned_) {
+        if (h != kNullHandle && count > 0) worklist.push_back(h);
+    }
+
+    // Mark phase: trace ONLY span rootHandles and owning block refs (skip bytes completely!)
+    while (!worklist.empty()) {
+        HandleId h = worklist.back();
+        worklist.pop_back();
+        if (h == kNullHandle || h >= objects_.size()) continue;
+        MemoryBlock& blk = objects_[h];
+        if (!blk.alive || blk.marked) continue;
+
+        blk.marked = true;
+        ++stats.marked;
+
+        if (blk.rootHandle != kNullHandle) {
+            // Span: keep backing root block alive
+            worklist.push_back(blk.rootHandle);
+        } else {
+            // Owning block: scan ONLY refs; skip bytes completely (O(1) for raw buffers)
+            for (HandleId child : blk.refs) {
+                if (child != kNullHandle) {
+                    worklist.push_back(child);
+                }
+            }
+        }
+    }
+
+    // Sweep phase: reclaim unmarked blocks and recycle handle IDs via freeList_
+    for (HandleId h = 1; h < objects_.size(); ++h) {
+        MemoryBlock& blk = objects_[h];
+        if (!blk.alive) continue;
+
+        if (!blk.marked) {
+            blk.bytes.clear();
+            blk.bytes.shrink_to_fit();
+            blk.refs.clear();
+            blk.refs.shrink_to_fit();
+            blk.rootHandle = kNullHandle;
+            blk.byteOffset = 0;
+            blk.byteSize = 0;
+            blk.refOffset = 0;
+            blk.refCount = 0;
+            blk.readOnly = false;
+            blk.alive = false;
+            freeList_.push_back(h);
+            --liveCount_;
+            ++stats.swept;
+        } else {
+            blk.marked = false;
+        }
+    }
+
+    ++totalCollections_;
+    stats.liveAfter = liveCount_;
+    stats.totalCollections = totalCollections_;
+    return stats;
 }
 
 } // namespace optrich

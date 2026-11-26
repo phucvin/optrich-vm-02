@@ -25,20 +25,22 @@ make test
 ./build/optrich-vm examples/span_demo.wat main
 ```
 
-## Architecture (Phases 1 & 2 Implemented)
+## Architecture (Phases 1–4 Implemented)
 
-* `include/optrich/types.hpp` — Value types (`i32`, `i64`, `f32`, `f64`, opaque `handle`, static `rw_handle` / `ro_handle`) and stack-resident `FatHandle`.
-* `include/optrich/memory_store.hpp`, `src/memory_store.cpp` — Split-block `MemoryStore` separating raw `bytes` from GC-tracked `refs`, with flattened `rootHandle` zero-copy spans and `as_readonly`.
+* `include/optrich/types.hpp` — Tagged `Value`s (`i32`, `i64`, `f32`, `f64`, opaque `handle`, static `rw_handle` / `ro_handle`), `FatHandle`, and `GCStats`.
+* `include/optrich/memory_store.hpp`, `src/memory_store.cpp` — Split-block `MemoryStore` separating raw `bytes` from GC-tracked `refs`, flattened `rootHandle` zero-copy spans, `as_readonly`, `clone_span`, host pinning, and precise mark-and-sweep GC ($O(1)$ on raw byte buffers).
 * `include/optrich/parser.hpp`, `src/parser.cpp` — WAT S-expression lexer & parser.
-* `include/optrich/bytecode.hpp`, `include/optrich/compiler.hpp`, `src/compiler.cpp` — Compile/validation pass lowering `$names` to compact indices, precomputing branch target PCs, enforcing handle unforgeability and static `ro_handle` write safety, and failing fast on unknown opcodes.
-* `include/optrich/vm.hpp`, `src/vm.cpp` — Flat-stack computed-goto interpreter with fat-handle fast paths for native `mem.*` opcodes.
+* `include/optrich/bytecode.hpp`, `include/optrich/compiler.hpp`, `src/compiler.cpp` — Compile/validation pass lowering `$names` to compact indices, precomputing branch target PCs, supporting imports/tables/`elem`/`call_indirect`, and enforcing handle unforgeability and static `ro_handle` write safety.
+* `include/optrich/vm.hpp`, `src/vm.cpp` — Flat-stack computed-goto interpreter with fat-handle fast paths, direct cross-module calls, cross-module `call_indirect`, and precise stack/frame GC root scanning.
+* `include/optrich/runtime.hpp`, `src/runtime.cpp` — Unified multi-module `Runtime` and `Linker` over a single shared `MemoryStore` and cross-module GC.
 
 ## Documentation
 
 * [Roadmap](docs/roadmap.md) — Phased implementation plan and MVP milestones for `optrich-vm-02`.
 * [Memory Model & Performance](docs/memory-model.md) — Design space, industry prior art (MS-Wasm, Java `MemorySegment`, CHERI), and interpreter/JIT performance strategy.
 * [Garbage Collection](docs/gc.md) — GC options and the Split Blocks (`alloc(num_bytes, num_refs)`) design.
+* [Shared Conventions](docs/shared-conventions.md) — Minimal conventions for shared UTF-8 string spans, typed slices, and polymorphic interface handles.
 
 ## Status
 
-**Milestone 1 (Phases 1 & 2) complete:** Capability-safe split-block memory model, complete core Wasm semantics, native `mem.*` opcodes, pre-resolved bytecode compiler, computed-goto VM with fat handles, CLI runner, and test suite. Next up: Phase 3 (Precise GC) and Phase 4 (Multi-Module Runtime & Linker). See [docs/roadmap.md](docs/roadmap.md) for details.
+**Phases 1–4 (Milestones 1–3) complete:** Capability-safe split-block memory model, complete core Wasm semantics, native `mem.*` opcodes, pre-resolved bytecode compiler, computed-goto VM with fat handles, precise cross-module mark-and-sweep GC (`clone_span`, host pinning, automatic threshold triggers), and unified multi-module `Runtime` + `Linker` with direct cross-module calls and `call_indirect` tables. Next up: Phase 5 (Benchmarks & JIT Readiness). See [docs/roadmap.md](docs/roadmap.md) for details.

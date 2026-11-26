@@ -132,6 +132,7 @@ struct ModuleContext {
     CompiledModule mod;
     std::unordered_map<std::string, uint32_t> typeNames;
     std::unordered_map<std::string, uint32_t> funcNames;
+    std::unordered_map<std::string, uint32_t> tableNames;
     std::unordered_map<std::string, uint32_t> globalNames;
     std::unordered_map<std::string, uint32_t> stringNames;
 
@@ -150,6 +151,15 @@ struct ModuleContext {
         return idx;
     }
 
+    uint32_t intern_type(const FuncSignature& sig) {
+        for (uint32_t i = 0; i < mod.types.size(); ++i) {
+            if (mod.types[i] == sig) return i;
+        }
+        uint32_t idx = static_cast<uint32_t>(mod.types.size());
+        mod.types.push_back(sig);
+        return idx;
+    }
+
     uint32_t resolve_func(const SExpr& node) const {
         if (is_ident(node)) {
             auto it = funcNames.find(node.text);
@@ -159,8 +169,23 @@ struct ModuleContext {
             return it->second;
         }
         uint32_t idx = parse_u32_index(node.text, node.line);
-        if (idx >= mod.funcs.size()) {
+        if (idx >= mod.total_funcs()) {
             throw CompileError("function index out of range at line " + std::to_string(node.line));
+        }
+        return idx;
+    }
+
+    uint32_t resolve_table(const SExpr& node) const {
+        if (is_ident(node)) {
+            auto it = tableNames.find(node.text);
+            if (it == tableNames.end()) {
+                throw CompileError("unknown table '" + node.text + "' at line " + std::to_string(node.line));
+            }
+            return it->second;
+        }
+        uint32_t idx = parse_u32_index(node.text, node.line);
+        if (idx >= mod.total_tables()) {
+            throw CompileError("table index out of range at line " + std::to_string(node.line));
         }
         return idx;
     }
@@ -208,7 +233,6 @@ public:
         : mctx_(mctx), fn_(fn), localNames_(std::move(local_names)) {}
 
     void compile_body(const std::vector<SExpr>& nodes, size_t start_idx) {
-        // Push function-level control frame
         CtrlFrame root;
         root.kind = CtrlKind::Function;
         root.resultTypes = fn_.sig.results;
@@ -218,12 +242,10 @@ public:
 
         compile_sequence(nodes, start_idx, nodes.size());
 
-        // Must have only the function frame left
         if (ctrlStack_.size() != 1) {
             throw CompileError("unclosed block/loop/if in function '" + fn_.name + "'");
         }
 
-        // Validate function results
         CtrlFrame& f = ctrlStack_.back();
         validate_frame_exit(f, 0);
 
@@ -242,25 +264,22 @@ private:
     };
 
     struct CtrlFrame {
-        CtrlKind             kind = CtrlKind::Block;
-        std::string          label;
-        std::vector<ValType> resultTypes;
-        size_t               stackHeight = 0;
-        uint32_t             startPc     = 0;
-        bool                 polymorphic = false;
-        bool                 hasElse     = false;
-        uint32_t             ifJumpPc    = 0; // BrIfZero to else/end
-        uint32_t             elseJumpPc  = 0; // Br from end of then to end
+        CtrlKind                  kind = CtrlKind::Block;
+        std::string               label;
+        std::vector<ValType>      resultTypes;
+        size_t                    stackHeight = 0;
+        uint32_t                  startPc     = 0;
+        bool                      polymorphic = false;
+        bool                      hasElse     = false;
+        uint32_t                  ifJumpPc    = 0;
+        uint32_t                  elseJumpPc  = 0;
         std::vector<uint32_t>     endPatches;
         std::vector<BrTablePatch> brTablePatches;
     };
 
-    // Sentinel for polymorphic stack values (produced in unreachable code).
     static constexpr ValType kUnknownType = static_cast<ValType>(255);
 
-    void push_type(ValType t) {
-        typeStack_.push_back(t);
-    }
+    void push_type(ValType t) { typeStack_.push_back(t); }
 
     ValType pop_any(size_t line) {
         CtrlFrame& f = ctrlStack_.back();
@@ -321,7 +340,6 @@ private:
                 }
             }
         } else {
-            // In unreachable tail, stack must be compatible if anything was pushed
             size_t extra = typeStack_.size() - f.stackHeight;
             if (extra > f.resultTypes.size()) {
                 throw CompileError("extra values on stack at block end at line " + std::to_string(line));
@@ -365,8 +383,6 @@ private:
         return idx;
     }
 
-    // Resolve branch label ($name or numeric depth 0 = innermost).
-    // Returns index into ctrlStack_.
     size_t resolve_label(const SExpr& node) const {
         if (is_ident(node)) {
             for (size_t i = ctrlStack_.size(); i > 0; --i) {
@@ -384,7 +400,6 @@ private:
         return ctrlStack_.size() - 1 - depth;
     }
 
-    // Check branch target values on stack and compute (arity, dropCount).
     std::pair<uint16_t, uint32_t> check_branch_stack(size_t target_idx, size_t line, bool pop_values) {
         const CtrlFrame& target = ctrlStack_[target_idx];
         const std::vector<ValType>& br_types =
@@ -401,7 +416,6 @@ private:
             drop_count = static_cast<uint32_t>(typeStack_.size() - target.stackHeight);
         }
         if (!pop_values) {
-            // Restore values for br_if fallthrough
             for (size_t i = popped.size(); i > 0; --i) {
                 push_type(popped[i - 1]);
             }
@@ -409,7 +423,6 @@ private:
         return {arity, drop_count};
     }
 
-    // Compile a flat sequence of WAT instructions (which may include folded S-exprs).
     void compile_sequence(const std::vector<SExpr>& nodes, size_t start, size_t end) {
         size_t i = start;
         while (i < end) {
@@ -426,10 +439,73 @@ private:
         }
     }
 
-    // Compile a folded S-expression instruction, e.g.:
-    //   (i32.add (local.get $x) (i32.const 1))
-    //   (block $b (result i32) ...)
-    //   (if (result i32) <cond> (then ...) (else ...))
+    void parse_call_indirect_header(const std::vector<SExpr>& nodes, size_t start, size_t end,
+                                    size_t& out_next, uint16_t& out_table_idx, uint32_t& out_type_idx,
+                                    size_t line) {
+        size_t idx = start;
+        uint16_t table_idx = 0;
+        if (idx < end && nodes[idx].is_atom() &&
+            (is_ident(nodes[idx]) || (!nodes[idx].text.empty() && std::isdigit(static_cast<unsigned char>(nodes[idx].text[0]))))) {
+            table_idx = static_cast<uint16_t>(mctx_.resolve_table(nodes[idx++]));
+        } else if (mctx_.mod.total_tables() == 0) {
+            throw CompileError("call_indirect requires a declared or imported table at line " +
+                               std::to_string(line));
+        }
+
+        std::optional<uint32_t> explicit_type;
+        if (idx < end && nodes[idx].is_list_with_head("type")) {
+            if (nodes[idx].children.size() != 2) {
+                throw CompileError("invalid (type ...) in call_indirect at line " + std::to_string(line));
+            }
+            explicit_type = mctx_.resolve_type(nodes[idx++].children[1]);
+        }
+
+        FuncSignature inline_sig;
+        bool has_inline = false;
+        while (idx < end && nodes[idx].is_list_with_head("param")) {
+            has_inline = true;
+            for (size_t k = 1; k < nodes[idx].children.size(); ++k) {
+                if (k == 1 && is_ident(nodes[idx].children[k])) continue;
+                inline_sig.params.push_back(expect_val_type(nodes[idx].children[k]));
+            }
+            ++idx;
+        }
+        while (idx < end && nodes[idx].is_list_with_head("result")) {
+            has_inline = true;
+            for (size_t k = 1; k < nodes[idx].children.size(); ++k) {
+                inline_sig.results.push_back(expect_val_type(nodes[idx].children[k]));
+            }
+            ++idx;
+        }
+
+        uint32_t type_idx = 0;
+        if (explicit_type) {
+            type_idx = *explicit_type;
+            if (has_inline && mctx_.mod.types[type_idx] != inline_sig) {
+                throw CompileError("call_indirect inline signature does not match referenced type at line " +
+                                   std::to_string(line));
+            }
+        } else {
+            type_idx = mctx_.intern_type(inline_sig);
+        }
+
+        out_next = idx;
+        out_table_idx = table_idx;
+        out_type_idx = type_idx;
+    }
+
+    void emit_call_indirect(uint16_t table_idx, uint32_t type_idx, size_t line) {
+        pop_expected(ValType::I32, line); // table element index
+        const FuncSignature& sig = mctx_.mod.types[type_idx];
+        for (size_t k = sig.params.size(); k > 0; --k) {
+            pop_expected(sig.params[k - 1], line);
+        }
+        for (ValType r : sig.results) {
+            push_type(r);
+        }
+        fn_.code.push_back(Instr::make_u32(OpCode::CallIndirect, type_idx, table_idx));
+    }
+
     void compile_folded(const SExpr& expr) {
         if (expr.children.empty() || !expr.children[0].is_atom()) {
             throw CompileError("invalid folded instruction at line " + std::to_string(expr.line));
@@ -469,7 +545,6 @@ private:
                 }
                 ++idx;
             }
-            // Any expressions before (then ...) are folded condition operands
             size_t then_idx = idx;
             while (then_idx < expr.children.size() && !expr.children[then_idx].is_list_with_head("then")) {
                 ++then_idx;
@@ -494,32 +569,35 @@ private:
             return;
         }
 
-        // Standard folded instruction: immediates come immediately after opcode,
-        // followed by folded operand sub-expressions (lists).
-        size_t imm_count = immediate_count(op);
+        if (op == "call_indirect") {
+            size_t operand_start = 1;
+            uint16_t table_idx = 0;
+            uint32_t type_idx = 0;
+            parse_call_indirect_header(expr.children, 1, expr.children.size(),
+                                       operand_start, table_idx, type_idx, line);
+            compile_sequence(expr.children, operand_start, expr.children.size());
+            emit_call_indirect(table_idx, type_idx, line);
+            return;
+        }
+
         if (op == "br_table") {
-            // (br_table $l0 $l1 ... <index-expr>)
             size_t operand_start = expr.children.size();
             while (operand_start > 1 && expr.children[operand_start - 1].is_list()) {
                 --operand_start;
             }
-            // Compile folded operands first (pushed onto stack)
             compile_sequence(expr.children, operand_start, expr.children.size());
-            // Emit br_table with labels [1 .. operand_start)
             emit_br_table(expr.children, 1, operand_start, line);
             return;
         }
 
+        size_t imm_count = immediate_count(op);
         if (1 + imm_count > expr.children.size()) {
             throw CompileError("missing immediate for '" + op + "' at line " + std::to_string(line));
         }
-        // Compile folded operand sub-expressions first (left-to-right)
         compile_sequence(expr.children, 1 + imm_count, expr.children.size());
-        // Now emit the opcode with its immediates
         emit_opcode(op, expr.children, 1, line);
     }
 
-    // Compile one flat instruction starting at nodes[i], returning the next index.
     size_t compile_flat_instr(const std::vector<SExpr>& nodes, size_t i, size_t end) {
         const std::string& op = nodes[i].text;
         size_t line = nodes[i].line;
@@ -566,6 +644,15 @@ private:
         if (op == "end") {
             exit_block(line);
             return i + 1;
+        }
+
+        if (op == "call_indirect") {
+            size_t next_idx = i + 1;
+            uint16_t table_idx = 0;
+            uint32_t type_idx = 0;
+            parse_call_indirect_header(nodes, i + 1, end, next_idx, table_idx, type_idx, line);
+            emit_call_indirect(table_idx, type_idx, line);
+            return next_idx;
         }
 
         if (op == "br_table") {
@@ -620,12 +707,8 @@ private:
         validate_frame_exit(f, line);
         f.elseJumpPc = static_cast<uint32_t>(fn_.code.size());
         fn_.code.push_back(Instr::make_branch(OpCode::Br, 0, 0, 0));
-
-        // Patch the if-false jump to start of else
         fn_.code[f.ifJumpPc].imm.u32 = static_cast<uint32_t>(fn_.code.size());
         f.hasElse = true;
-
-        // Reset operand stack to block entry for the else branch
         typeStack_.resize(f.stackHeight);
         f.polymorphic = false;
     }
@@ -639,7 +722,6 @@ private:
 
         validate_frame_exit(f, line);
 
-        // If `if` has no `else`, it cannot produce result values
         if (f.kind == CtrlKind::If && !f.hasElse && !f.resultTypes.empty()) {
             throw CompileError("'if' with result type must have an 'else' branch at line " +
                                std::to_string(line));
@@ -655,7 +737,6 @@ private:
         }
         patch_frame_ends(f, end_pc);
 
-        // Normalize stack to frame entry + resultTypes
         typeStack_.resize(f.stackHeight);
         for (ValType t : f.resultTypes) {
             typeStack_.push_back(t);
@@ -673,7 +754,6 @@ private:
         size_t count = end - start;
         bt.targets.resize(count - 1);
 
-        // Validate all targets against the default target's arity
         for (size_t k = 0; k < count; ++k) {
             size_t target_idx = resolve_label(nodes[start + k]);
             auto [arity, drop_count] = check_branch_stack(target_idx, line, false);
@@ -711,7 +791,6 @@ private:
     }
 
     void emit_opcode(const std::string& op, const std::vector<SExpr>& nodes, size_t imm_idx, size_t line) {
-        // Control flow
         if (op == "nop") {
             fn_.code.push_back(Instr::make(OpCode::Nop));
             return;
@@ -759,7 +838,7 @@ private:
         }
         if (op == "call") {
             uint32_t fidx = mctx_.resolve_func(nodes[imm_idx]);
-            const FuncSignature& sig = mctx_.mod.funcs[fidx].sig;
+            const FuncSignature& sig = mctx_.mod.func_sig(fidx);
             for (size_t k = sig.params.size(); k > 0; --k) {
                 pop_expected(sig.params[k - 1], line);
             }
@@ -770,7 +849,6 @@ private:
             return;
         }
 
-        // Parametric
         if (op == "drop") {
             pop_any(line);
             fn_.code.push_back(Instr::make(OpCode::Drop));
@@ -795,7 +873,6 @@ private:
             return;
         }
 
-        // Locals & Globals
         if (op == "local.get") {
             uint32_t idx = resolve_local(nodes[imm_idx]);
             push_type(fn_.locals[idx]);
@@ -831,7 +908,6 @@ private:
             return;
         }
 
-        // Constants
         if (op == "i32.const") {
             int32_t v = parse_i32_literal(nodes[imm_idx].text, nodes[imm_idx].line);
             push_type(ValType::I32);
@@ -868,25 +944,25 @@ private:
             return;
         }
 
-        // Native Split-Block Memory Opcodes (Phase 2)
+        // Native Split-Block Memory Opcodes
         if (op == "mem.alloc") {
-            pop_expected(ValType::I32, line); // num_refs
-            pop_expected(ValType::I32, line); // num_bytes
+            pop_expected(ValType::I32, line);
+            pop_expected(ValType::I32, line);
             push_type(ValType::RwHandle);
             fn_.code.push_back(Instr::make(OpCode::MemAlloc));
             return;
         }
         if (op == "mem.span") {
-            pop_expected(ValType::I32, line); // byte_len
-            pop_expected(ValType::I32, line); // byte_off
+            pop_expected(ValType::I32, line);
+            pop_expected(ValType::I32, line);
             ValType ht = pop_handle(line, false);
             push_type(ht);
             fn_.code.push_back(Instr::make(OpCode::MemSpan));
             return;
         }
         if (op == "mem.ref_span") {
-            pop_expected(ValType::I32, line); // ref_len
-            pop_expected(ValType::I32, line); // ref_off
+            pop_expected(ValType::I32, line);
+            pop_expected(ValType::I32, line);
             ValType ht = pop_handle(line, false);
             push_type(ht);
             fn_.code.push_back(Instr::make(OpCode::MemRefSpan));
@@ -896,6 +972,12 @@ private:
             pop_handle(line, false);
             push_type(ValType::RoHandle);
             fn_.code.push_back(Instr::make(OpCode::MemReadOnly));
+            return;
+        }
+        if (op == "mem.clone_span") {
+            ValType ht = pop_handle(line, false);
+            push_type(ht);
+            fn_.code.push_back(Instr::make(OpCode::MemCloneSpan));
             return;
         }
         if (op == "mem.byte_len" || op == "mem.len") {
@@ -930,7 +1012,6 @@ private:
             return;
         }
 
-        // Typed byte reads: (h: handle, off: i32) -> T
         auto emit_mem_read = [&](OpCode code, ValType res) {
             pop_expected(ValType::I32, line);
             pop_handle(line, false);
@@ -946,11 +1027,10 @@ private:
         if (op == "mem.read_f32") { emit_mem_read(OpCode::MemReadF32, ValType::F32); return; }
         if (op == "mem.read_f64") { emit_mem_read(OpCode::MemReadF64, ValType::F64); return; }
 
-        // Typed byte writes: (h: handle, off: i32, val: T) -> ()
         auto emit_mem_write = [&](OpCode code, ValType val_t) {
             pop_expected(val_t, line);
             pop_expected(ValType::I32, line);
-            pop_handle(line, true); // statically rejects ro_handle!
+            pop_handle(line, true);
             fn_.code.push_back(Instr::make(code));
         };
         if (op == "mem.write_u8" || op == "mem.write_i8")   { emit_mem_write(OpCode::MemWriteU8,  ValType::I32); return; }
@@ -960,7 +1040,6 @@ private:
         if (op == "mem.write_f32") { emit_mem_write(OpCode::MemWriteF32, ValType::F32); return; }
         if (op == "mem.write_f64") { emit_mem_write(OpCode::MemWriteF64, ValType::F64); return; }
 
-        // Reference slot ops
         if (op == "mem.read_ref") {
             pop_expected(ValType::I32, line);
             pop_handle(line, false);
@@ -969,51 +1048,48 @@ private:
             return;
         }
         if (op == "mem.write_ref") {
-            pop_handle(line, false); // child
-            pop_expected(ValType::I32, line); // slot_idx
-            pop_handle(line, true);  // parent (must be writable)
+            pop_handle(line, false);
+            pop_expected(ValType::I32, line);
+            pop_handle(line, true);
             fn_.code.push_back(Instr::make(OpCode::MemWriteRef));
             return;
         }
 
-        // Bulk memory ops
         if (op == "mem.copy") {
-            pop_expected(ValType::I32, line); // len
-            pop_expected(ValType::I32, line); // src_off
-            pop_handle(line, false);          // src
-            pop_expected(ValType::I32, line); // dst_off
-            pop_handle(line, true);           // dst (must be writable)
+            pop_expected(ValType::I32, line);
+            pop_expected(ValType::I32, line);
+            pop_handle(line, false);
+            pop_expected(ValType::I32, line);
+            pop_handle(line, true);
             fn_.code.push_back(Instr::make(OpCode::MemCopy));
             return;
         }
         if (op == "mem.fill") {
-            pop_expected(ValType::I32, line); // len
-            pop_expected(ValType::I32, line); // val
-            pop_expected(ValType::I32, line); // dst_off
-            pop_handle(line, true);           // dst (must be writable)
+            pop_expected(ValType::I32, line);
+            pop_expected(ValType::I32, line);
+            pop_expected(ValType::I32, line);
+            pop_handle(line, true);
             fn_.code.push_back(Instr::make(OpCode::MemFill));
             return;
         }
         if (op == "mem.cmp") {
-            pop_expected(ValType::I32, line); // len
-            pop_expected(ValType::I32, line); // b_off
-            pop_handle(line, false);          // b
-            pop_expected(ValType::I32, line); // a_off
-            pop_handle(line, false);          // a
+            pop_expected(ValType::I32, line);
+            pop_expected(ValType::I32, line);
+            pop_handle(line, false);
+            pop_expected(ValType::I32, line);
+            pop_handle(line, false);
             push_type(ValType::I32);
             fn_.code.push_back(Instr::make(OpCode::MemCmp));
             return;
         }
 
-        // Numeric & conversion ops lookup table
         struct OpSig {
             OpCode  code;
-            uint8_t arity; // 1 or 2
+            uint8_t arity;
             ValType inType;
             ValType outType;
         };
         static const std::unordered_map<std::string, OpSig> kNumericOps = {
-            // i32
             {"i32.eqz",    {OpCode::I32Eqz,    1, ValType::I32, ValType::I32}},
             {"i32.eq",     {OpCode::I32Eq,     2, ValType::I32, ValType::I32}},
             {"i32.ne",     {OpCode::I32Ne,     2, ValType::I32, ValType::I32}},
@@ -1044,7 +1120,6 @@ private:
             {"i32.rotl",   {OpCode::I32Rotl,   2, ValType::I32, ValType::I32}},
             {"i32.rotr",   {OpCode::I32Rotr,   2, ValType::I32, ValType::I32}},
 
-            // i64
             {"i64.eqz",    {OpCode::I64Eqz,    1, ValType::I64, ValType::I32}},
             {"i64.eq",     {OpCode::I64Eq,     2, ValType::I64, ValType::I32}},
             {"i64.ne",     {OpCode::I64Ne,     2, ValType::I64, ValType::I32}},
@@ -1075,7 +1150,6 @@ private:
             {"i64.rotl",   {OpCode::I64Rotl,   2, ValType::I64, ValType::I64}},
             {"i64.rotr",   {OpCode::I64Rotr,   2, ValType::I64, ValType::I64}},
 
-            // f32
             {"f32.eq",       {OpCode::F32Eq,       2, ValType::F32, ValType::I32}},
             {"f32.ne",       {OpCode::F32Ne,       2, ValType::F32, ValType::I32}},
             {"f32.lt",       {OpCode::F32Lt,       2, ValType::F32, ValType::I32}},
@@ -1097,7 +1171,6 @@ private:
             {"f32.max",      {OpCode::F32Max,      2, ValType::F32, ValType::F32}},
             {"f32.copysign", {OpCode::F32Copysign, 2, ValType::F32, ValType::F32}},
 
-            // f64
             {"f64.eq",       {OpCode::F64Eq,       2, ValType::F64, ValType::I32}},
             {"f64.ne",       {OpCode::F64Ne,       2, ValType::F64, ValType::I32}},
             {"f64.lt",       {OpCode::F64Lt,       2, ValType::F64, ValType::I32}},
@@ -1119,7 +1192,6 @@ private:
             {"f64.max",      {OpCode::F64Max,      2, ValType::F64, ValType::F64}},
             {"f64.copysign", {OpCode::F64Copysign, 2, ValType::F64, ValType::F64}},
 
-            // Conversions
             {"i32.wrap_i64",        {OpCode::I32WrapI64,        1, ValType::I64, ValType::I32}},
             {"i64.extend_i32_s",    {OpCode::I64ExtendI32S,     1, ValType::I32, ValType::I64}},
             {"i64.extend_i32_u",    {OpCode::I64ExtendI32U,     1, ValType::I32, ValType::I64}},
@@ -1163,7 +1235,6 @@ private:
             return;
         }
 
-        // Fail-fast validation on unknown opcodes!
         throw CompileError("unknown opcode '" + op + "' at line " + std::to_string(line));
     }
 
@@ -1176,9 +1247,9 @@ private:
 };
 
 struct PendingFunc {
-    uint32_t                                  funcIdx = 0;
-    const SExpr*                              expr    = nullptr;
-    size_t                                    bodyStart = 0;
+    uint32_t                                  localFuncIdx = 0;
+    const SExpr*                              expr         = nullptr;
+    size_t                                    bodyStart    = 0;
     std::unordered_map<std::string, uint32_t> localNames;
 };
 
@@ -1192,8 +1263,9 @@ CompiledModule compile_module(const SExpr& root) {
     ModuleContext mctx;
     std::vector<PendingFunc> pendingFuncs;
     std::vector<const SExpr*> pendingExports;
+    std::vector<const SExpr*> pendingElems;
 
-    // Pass 1: Collect types, strings, globals, function signatures, and exports.
+    // Pass 1a: Types and Imports first (so imports always occupy indices [0 .. N_imp - 1]).
     for (size_t i = 1; i < root.children.size(); ++i) {
         const SExpr& item = root.children[i];
         if (!item.is_list() || item.children.empty() || !item.children[0].is_atom()) {
@@ -1229,6 +1301,72 @@ CompiledModule compile_module(const SExpr& root) {
             uint32_t tidx = static_cast<uint32_t>(mctx.mod.types.size());
             mctx.mod.types.push_back(std::move(sig));
             if (!name.empty()) mctx.typeNames[name] = tidx;
+        } else if (head == "import") {
+            if (item.children.size() != 4 || !item.children[1].is_string() ||
+                !item.children[2].is_string() || !item.children[3].is_list()) {
+                throw CompileError("invalid (import ...) declaration at line " + std::to_string(item.line));
+            }
+            const std::string& mod_name = item.children[1].text;
+            const std::string& fld_name = item.children[2].text;
+            const SExpr& desc = item.children[3];
+
+            if (desc.is_list_with_head("func")) {
+                FuncImport imp;
+                imp.moduleName = mod_name;
+                imp.fieldName = fld_name;
+                size_t idx = 1;
+                if (idx < desc.children.size() && is_ident(desc.children[idx])) {
+                    imp.localName = desc.children[idx++].text;
+                }
+                if (idx < desc.children.size() && desc.children[idx].is_list_with_head("type")) {
+                    uint32_t tidx = mctx.resolve_type(desc.children[idx++].children[1]);
+                    imp.sig = mctx.mod.types[tidx];
+                }
+                while (idx < desc.children.size()) {
+                    const SExpr& sub = desc.children[idx++];
+                    if (sub.is_list_with_head("param")) {
+                        size_t p = 1;
+                        if (p < sub.children.size() && is_ident(sub.children[p])) ++p;
+                        for (; p < sub.children.size(); ++p) {
+                            imp.sig.params.push_back(expect_val_type(sub.children[p]));
+                        }
+                    } else if (sub.is_list_with_head("result")) {
+                        for (size_t r = 1; r < sub.children.size(); ++r) {
+                            imp.sig.results.push_back(expect_val_type(sub.children[r]));
+                        }
+                    }
+                }
+                uint32_t fidx = static_cast<uint32_t>(mctx.mod.funcImports.size());
+                if (!imp.localName.empty()) mctx.funcNames[imp.localName] = fidx;
+                mctx.mod.funcImports.push_back(std::move(imp));
+            } else if (desc.is_list_with_head("table")) {
+                TableImport timp;
+                timp.moduleName = mod_name;
+                timp.fieldName = fld_name;
+                size_t idx = 1;
+                if (idx < desc.children.size() && is_ident(desc.children[idx])) {
+                    timp.localName = desc.children[idx++].text;
+                }
+                if (idx < desc.children.size() && desc.children[idx].is_atom() &&
+                    std::isdigit(static_cast<unsigned char>(desc.children[idx].text[0]))) {
+                    timp.initialSize = parse_u32_index(desc.children[idx++].text, desc.line);
+                }
+                uint32_t tidx = static_cast<uint32_t>(mctx.mod.tableImports.size());
+                if (!timp.localName.empty()) mctx.tableNames[timp.localName] = tidx;
+                mctx.mod.tableImports.push_back(std::move(timp));
+            } else {
+                throw CompileError("unsupported import kind at line " + std::to_string(desc.line));
+            }
+        }
+    }
+
+    // Pass 1b: Strings, globals, tables, local functions, exports, elems.
+    for (size_t i = 1; i < root.children.size(); ++i) {
+        const SExpr& item = root.children[i];
+        const std::string& head = item.children[0].text;
+
+        if (head == "type" || head == "import") {
+            continue;
         } else if (head == "string" || head == "const_str") {
             size_t idx = 1;
             std::string name;
@@ -1241,6 +1379,28 @@ CompiledModule compile_module(const SExpr& root) {
             uint32_t sidx = static_cast<uint32_t>(mctx.mod.strings.size());
             mctx.mod.strings.push_back(item.children[idx].text);
             if (!name.empty()) mctx.stringNames[name] = sidx;
+        } else if (head == "table") {
+            uint32_t unified_tidx = mctx.mod.total_tables();
+            TableDef td;
+            size_t idx = 1;
+            if (idx < item.children.size() && is_ident(item.children[idx])) {
+                td.name = item.children[idx++].text;
+                mctx.tableNames[td.name] = unified_tidx;
+            }
+            while (idx < item.children.size() && item.children[idx].is_list_with_head("export")) {
+                if (item.children[idx].children.size() != 2 || !item.children[idx].children[1].is_string()) {
+                    throw CompileError("invalid inline table export at line " + std::to_string(item.line));
+                }
+                mctx.mod.tableExports[item.children[idx].children[1].text] = unified_tidx;
+                ++idx;
+            }
+            if (idx < item.children.size() && item.children[idx].is_atom() &&
+                std::isdigit(static_cast<unsigned char>(item.children[idx].text[0]))) {
+                td.initialSize = parse_u32_index(item.children[idx++].text, item.line);
+            }
+            mctx.mod.tables.push_back(std::move(td));
+        } else if (head == "elem") {
+            pendingElems.push_back(&item);
         } else if (head == "global") {
             size_t idx = 1;
             CompiledGlobal g;
@@ -1283,7 +1443,7 @@ CompiledModule compile_module(const SExpr& root) {
                     g.initVal = Value::from_f64(parse_f64_literal(init.children[1].text, init.line));
                 } else if (iop == "handle.null") {
                     if (!is_handle_type(g.type)) throw CompileError("global init type mismatch");
-                    g.initVal = Value::from_handle(FatHandle::null());
+                    g.initVal = Value::zero(g.type);
                 } else if (iop == "mem.const_str" && init.children.size() == 2) {
                     if (g.type != ValType::RoHandle && g.type != ValType::Handle) {
                         throw CompileError("global mem.const_str requires ro_handle or handle");
@@ -1298,26 +1458,25 @@ CompiledModule compile_module(const SExpr& root) {
             if (!g.name.empty()) mctx.globalNames[g.name] = gidx;
             mctx.mod.globals.push_back(std::move(g));
         } else if (head == "func") {
-            uint32_t fidx = static_cast<uint32_t>(mctx.mod.funcs.size());
+            uint32_t local_fidx = static_cast<uint32_t>(mctx.mod.funcs.size());
+            uint32_t unified_fidx = static_cast<uint32_t>(mctx.mod.funcImports.size()) + local_fidx;
             CompiledFunc fn;
             std::unordered_map<std::string, uint32_t> localNames;
             size_t idx = 1;
 
             if (idx < item.children.size() && is_ident(item.children[idx])) {
                 fn.name = item.children[idx++].text;
-                mctx.funcNames[fn.name] = fidx;
+                mctx.funcNames[fn.name] = unified_fidx;
             }
 
-            // Inline (export "name")
             while (idx < item.children.size() && item.children[idx].is_list_with_head("export")) {
                 if (item.children[idx].children.size() != 2 || !item.children[idx].children[1].is_string()) {
                     throw CompileError("invalid inline export at line " + std::to_string(item.children[idx].line));
                 }
-                mctx.mod.exports[item.children[idx].children[1].text] = fidx;
+                mctx.mod.exports[item.children[idx].children[1].text] = unified_fidx;
                 ++idx;
             }
 
-            // Optional (type $t)
             if (idx < item.children.size() && item.children[idx].is_list_with_head("type")) {
                 if (item.children[idx].children.size() != 2) {
                     throw CompileError("invalid (type ...) reference at line " + std::to_string(item.children[idx].line));
@@ -1328,7 +1487,6 @@ CompiledModule compile_module(const SExpr& root) {
                 ++idx;
             }
 
-            // Params
             while (idx < item.children.size() && item.children[idx].is_list_with_head("param")) {
                 const SExpr& pnode = item.children[idx];
                 if (pnode.children.size() >= 3 && is_ident(pnode.children[1])) {
@@ -1351,7 +1509,6 @@ CompiledModule compile_module(const SExpr& root) {
             }
             fn.paramCount = static_cast<uint32_t>(fn.sig.params.size());
 
-            // Results
             while (idx < item.children.size() && item.children[idx].is_list_with_head("result")) {
                 const SExpr& rnode = item.children[idx];
                 for (size_t k = 1; k < rnode.children.size(); ++k) {
@@ -1360,7 +1517,6 @@ CompiledModule compile_module(const SExpr& root) {
                 ++idx;
             }
 
-            // Locals
             while (idx < item.children.size() && item.children[idx].is_list_with_head("local")) {
                 const SExpr& lnode = item.children[idx];
                 if (lnode.children.size() >= 3 && is_ident(lnode.children[1])) {
@@ -1380,7 +1536,7 @@ CompiledModule compile_module(const SExpr& root) {
             }
 
             mctx.mod.funcs.push_back(std::move(fn));
-            pendingFuncs.push_back(PendingFunc{fidx, &item, idx, std::move(localNames)});
+            pendingFuncs.push_back(PendingFunc{local_fidx, &item, idx, std::move(localNames)});
         } else if (head == "export") {
             pendingExports.push_back(&item);
         } else {
@@ -1389,19 +1545,61 @@ CompiledModule compile_module(const SExpr& root) {
         }
     }
 
-    // Resolve standalone exports
+    // Resolve standalone exports (func or table)
     for (const SExpr* exp : pendingExports) {
-        if (exp->children.size() != 3 || !exp->children[1].is_string() ||
-            !exp->children[2].is_list_with_head("func") || exp->children[2].children.size() != 2) {
+        if (exp->children.size() != 3 || !exp->children[1].is_string() || !exp->children[2].is_list() ||
+            exp->children[2].children.size() != 2) {
             throw CompileError("invalid (export ...) declaration at line " + std::to_string(exp->line));
         }
-        uint32_t fidx = mctx.resolve_func(exp->children[2].children[1]);
-        mctx.mod.exports[exp->children[1].text] = fidx;
+        const std::string& exp_name = exp->children[1].text;
+        const SExpr& target = exp->children[2];
+        if (target.is_list_with_head("func")) {
+            mctx.mod.exports[exp_name] = mctx.resolve_func(target.children[1]);
+        } else if (target.is_list_with_head("table")) {
+            mctx.mod.tableExports[exp_name] = mctx.resolve_table(target.children[1]);
+        } else {
+            throw CompileError("unsupported export kind at line " + std::to_string(exp->line));
+        }
+    }
+
+    // Resolve elem segments: (elem [(table $t)] (i32.const off) [func] $f0 $f1 ...)
+    for (const SExpr* el : pendingElems) {
+        ElemSegment seg;
+        size_t idx = 1;
+        if (idx < el->children.size() && el->children[idx].is_list_with_head("table")) {
+            if (el->children[idx].children.size() != 2) {
+                throw CompileError("invalid (table ...) in elem at line " + std::to_string(el->line));
+            }
+            seg.tableIdx = mctx.resolve_table(el->children[idx++].children[1]);
+        }
+        if (idx >= el->children.size()) {
+            throw CompileError("incomplete (elem ...) at line " + std::to_string(el->line));
+        }
+        const SExpr* off_expr = &el->children[idx++];
+        if (off_expr->is_list_with_head("offset") && off_expr->children.size() == 2) {
+            off_expr = &off_expr->children[1];
+        }
+        if (!off_expr->is_list_with_head("i32.const") || off_expr->children.size() != 2) {
+            throw CompileError("elem offset must be (i32.const N) at line " + std::to_string(el->line));
+        }
+        int32_t off = parse_i32_literal(off_expr->children[1].text, el->line);
+        if (off < 0) {
+            throw CompileError("negative elem offset at line " + std::to_string(el->line));
+        }
+        seg.offset = static_cast<uint32_t>(off);
+
+        if (idx < el->children.size() && el->children[idx].is_atom() && el->children[idx].text == "func") {
+            ++idx;
+        }
+        for (; idx < el->children.size(); ++idx) {
+            seg.funcIndices.push_back(mctx.resolve_func(el->children[idx]));
+        }
+        mctx.mod.elems.push_back(std::move(seg));
     }
 
     // Pass 2: Compile function bodies
     for (auto& pf : pendingFuncs) {
-        FuncCompiler fc(mctx, mctx.mod.funcs[pf.funcIdx], std::move(pf.localNames));
+        FuncCompiler fc(mctx, mctx.mod.funcs[pf.localFuncIdx], std::move(pf.localNames));
         fc.compile_body(pf.expr->children, pf.bodyStart);
     }
 

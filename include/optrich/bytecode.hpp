@@ -19,7 +19,8 @@ enum class OpCode : uint16_t {
     BrIfZero,    // imm.u32 = target_pc (jump if top i32 == 0, used by `if`)
     BrTable,     // imm.u32 = br_table index in CompiledFunc::brTables
     Return,
-    Call,        // imm.u32 = func index
+    Call,        // imm.u32 = func index (in module's unified import+local space)
+    CallIndirect,// imm.u32 = type index, aux = table index
 
     // Parametric
     Drop,
@@ -40,11 +41,12 @@ enum class OpCode : uint16_t {
     HandleNull,
     MemConstStr, // imm.u32 = string constant index -> pushes readonly FatHandle
 
-    // Native Split-Block Memory Opcodes (Phase 2)
+    // Native Split-Block Memory Opcodes (Phases 2 & 3)
     MemAlloc,      // (num_bytes: i32, num_refs: i32) -> rw_handle
     MemSpan,       // (h: handle, byte_off: i32, byte_len: i32) -> handle
     MemRefSpan,    // (h: handle, ref_off: i32, ref_len: i32) -> handle
     MemReadOnly,   // (h: handle) -> ro_handle
+    MemCloneSpan,  // (h: handle) -> handle (detaches slice from backing buffer)
     MemByteLen,    // (h: handle) -> i32
     MemRefLen,     // (h: handle) -> i32
     MemIsReadOnly, // (h: handle) -> i32
@@ -119,9 +121,9 @@ enum class OpCode : uint16_t {
 
 // Fixed-size 16-byte instruction: compact, cache-friendly, no heap indirection.
 struct Instr {
-    OpCode   op  = OpCode::Nop;
-    uint16_t aux = 0; // optional secondary field (e.g., stack unwind arity/drop count for branches)
-    uint32_t aux2 = 0; // optional extra field (e.g., target stack depth or result count)
+    OpCode   op   = OpCode::Nop;
+    uint16_t aux  = 0;
+    uint32_t aux2 = 0;
     union {
         uint32_t u32;
         int32_t  i32;
@@ -135,9 +137,10 @@ struct Instr {
         ins.op = op;
         return ins;
     }
-    static Instr make_u32(OpCode op, uint32_t v) {
+    static Instr make_u32(OpCode op, uint32_t v, uint16_t aux = 0) {
         Instr ins;
         ins.op = op;
+        ins.aux = aux;
         ins.imm.u32 = v;
         return ins;
     }
@@ -189,6 +192,36 @@ struct BrTable {
 struct FuncSignature {
     std::vector<ValType> params;
     std::vector<ValType> results;
+
+    bool operator==(const FuncSignature& o) const {
+        return params == o.params && results == o.results;
+    }
+    bool operator!=(const FuncSignature& o) const { return !(*this == o); }
+};
+
+struct FuncImport {
+    std::string   moduleName;
+    std::string   fieldName;
+    std::string   localName;
+    FuncSignature sig;
+};
+
+struct TableImport {
+    std::string moduleName;
+    std::string fieldName;
+    std::string localName;
+    uint32_t    initialSize = 0;
+};
+
+struct TableDef {
+    std::string name;
+    uint32_t    initialSize = 0;
+};
+
+struct ElemSegment {
+    uint32_t              tableIdx = 0;
+    uint32_t              offset   = 0;
+    std::vector<uint32_t> funcIndices; // indices in the module's unified func index space
 };
 
 struct CompiledFunc {
@@ -202,18 +235,36 @@ struct CompiledFunc {
 
 struct CompiledGlobal {
     std::string name;
-    ValType     type     = ValType::I32;
-    bool        isMut    = false;
+    ValType     type       = ValType::I32;
+    bool        isMut      = false;
     Value       initVal;
     int32_t     initStrIdx = -1; // >= 0 if initialized from a string constant
 };
 
 struct CompiledModule {
-    std::vector<FuncSignature>              types;
-    std::vector<CompiledFunc>               funcs;
-    std::vector<CompiledGlobal>             globals;
-    std::vector<std::string>                strings; // pre-allocated as read-only handles on instantiation
-    std::unordered_map<std::string, uint32_t> exports; // export name -> func index
+    std::vector<FuncSignature>                types;
+    std::vector<FuncImport>                   funcImports;
+    std::vector<CompiledFunc>                 funcs; // local funcs start at index funcImports.size()
+    std::vector<TableImport>                  tableImports;
+    std::vector<TableDef>                     tables; // local tables start at index tableImports.size()
+    std::vector<ElemSegment>                  elems;
+    std::vector<CompiledGlobal>               globals;
+    std::vector<std::string>                  strings;
+    std::unordered_map<std::string, uint32_t> exports;      // export name -> unified func index
+    std::unordered_map<std::string, uint32_t> tableExports; // export name -> unified table index
+
+    uint32_t total_funcs() const {
+        return static_cast<uint32_t>(funcImports.size() + funcs.size());
+    }
+    uint32_t total_tables() const {
+        return static_cast<uint32_t>(tableImports.size() + tables.size());
+    }
+    const FuncSignature& func_sig(uint32_t func_idx) const {
+        if (func_idx < funcImports.size()) {
+            return funcImports[func_idx].sig;
+        }
+        return funcs[func_idx - funcImports.size()].sig;
+    }
 };
 
 } // namespace optrich
