@@ -126,9 +126,6 @@ int main(int argc, char** argv) {
                               << ", ro=" << (results[i].handle.is_readonly() ? "true" : "false")
                               << ")\n";
                     break;
-                case ValType::FuncRef:
-                    std::cout << (results[i].funcref.is_null() ? "funcref(null)\n" : "funcref\n");
-                    break;
             }
         }
 

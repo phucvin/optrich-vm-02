@@ -80,11 +80,7 @@ ModuleInstance& Runtime::instantiate(std::string name, CompiledModule mod) {
                                                  std::move(imported_funcs),
                                                  std::move(imported_tables));
     ModuleInstance& ref = *inst;
-    int32_t start_fn = ref.module().startFunc;
     instances_[std::move(name)] = std::move(inst);
-    if (start_fn >= 0) {
-        vm_.invoke_index(ref, static_cast<uint32_t>(start_fn));
-    }
     return ref;
 }
 
