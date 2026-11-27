@@ -80,11 +80,14 @@ TEST(zero_copy_spans_readonly_and_const_strings) {
         (mem.write_u8 (local.get $buf) (i32.const 3) (i32.const 50))
         (call $sum_bytes (local.get $ro)))
 
-      ;; Dynamic handle traps at runtime if backed by read-only view
-      (func (export "dynamic_ro_write")
-        (local $h handle)
-        (local.set $h (mem.readonly (mem.alloc (i32.const 8) (i32.const 0))))
-        (mem.write_i32 (local.get $h) (i32.const 0) (i32.const 99)))
+      ;; Attempting to read a read-only ref slot as rw_handle traps at runtime!
+      (func (export "read_ref_rw_on_ro")
+        (local $box rw_handle)
+        (local $rw rw_handle)
+        (local.set $box (mem.alloc (i32.const 0) (i32.const 1)))
+        (mem.write_ref (local.get $box) (i32.const 0) (mem.readonly (mem.alloc (i32.const 8) (i32.const 0))))
+        (local.set $rw (mem.read_ref_rw (local.get $box) (i32.const 0)))
+        (mem.write_i32 (local.get $rw) (i32.const 0) (i32.const 99)))
     )
     )";
     CompiledModule mod = compile_wat(wat);
@@ -96,7 +99,7 @@ TEST(zero_copy_spans_readonly_and_const_strings) {
     int expected = 'O' + 'p' + 't' + 'r' + 'i' + 'c' + 'h';
     ASSERT_EQ(vm.invoke(inst, "slice_sum")[0].i32, expected);
     ASSERT_EQ(vm.invoke(inst, "share_readonly")[0].i32, 10 + 20 + 30 + 50);
-    ASSERT_THROWS(vm.invoke(inst, "dynamic_ro_write"), Trap);
+    ASSERT_THROWS(vm.invoke(inst, "read_ref_rw_on_ro"), Trap);
 }
 
 TEST(static_ro_handle_compile_time_rejection) {
@@ -119,7 +122,7 @@ TEST(split_block_linked_list_with_refs) {
     // Each node is alloc(4 bytes for value, 1 ref for next)
     const char* wat = R"(
     (module
-      (func $make_node (param $val i32) (param $next handle) (result handle)
+      (func $make_node (param $val i32) (param $next rw_handle) (result rw_handle)
         (local $n rw_handle)
         (local.set $n (mem.alloc (i32.const 4) (i32.const 1)))
         (mem.write_i32 (local.get $n) (i32.const 0) (local.get $val))
@@ -127,7 +130,7 @@ TEST(split_block_linked_list_with_refs) {
         (local.get $n))
 
       (func (export "sum_list") (param $count i32) (result i32)
-        (local $head handle)
+        (local $head rw_handle)
         (local $i i32)
         (local $sum i32)
         ;; Build list 1..count
@@ -143,7 +146,7 @@ TEST(split_block_linked_list_with_refs) {
           (loop $walk
             (br_if $walk_done (mem.is_null (local.get $head)))
             (local.set $sum (i32.add (local.get $sum) (mem.read_i32 (local.get $head) (i32.const 0))))
-            (local.set $head (mem.read_ref (local.get $head) (i32.const 0)))
+            (local.set $head (mem.read_ref_rw (local.get $head) (i32.const 0)))
             (br $walk)))
         (local.get $sum))
     )
@@ -218,11 +221,11 @@ TEST(mem_copy_refs_and_readonly_noop) {
         ;; Expect b[0]==s0, b[1]==s0, b[2]==s1, b[3]==s2
         (i32.add
           (i32.add
-            (mem.eq (mem.read_ref (local.get $b) (i32.const 0)) (mem.const_str $s0))
-            (mem.eq (mem.read_ref (local.get $b) (i32.const 1)) (mem.const_str $s0)))
+            (mem.eq (mem.read_ref_ro (local.get $b) (i32.const 0)) (mem.const_str $s0))
+            (mem.eq (mem.read_ref_ro (local.get $b) (i32.const 1)) (mem.const_str $s0)))
           (i32.add
-            (mem.eq (mem.read_ref (local.get $b) (i32.const 2)) (mem.const_str $s1))
-            (mem.eq (mem.read_ref (local.get $b) (i32.const 3)) (mem.const_str $s2)))))
+            (mem.eq (mem.read_ref_ro (local.get $b) (i32.const 2)) (mem.const_str $s1))
+            (mem.eq (mem.read_ref_ro (local.get $b) (i32.const 3)) (mem.const_str $s2)))))
     )
     )";
     CompiledModule mod = compile_wat(wat);
@@ -259,7 +262,7 @@ TEST(mem_sub_block_inline_struct_views) {
         (if (i32.eqz (mem.is_readonly (local.get $ro_sub))) (then (return (i32.const -1))))
         (if (i32.ne (mem.byte_len (local.get $sub)) (i32.const 8)) (then (return (i32.const -2))))
         (if (i32.ne (mem.ref_len (local.get $sub)) (i32.const 1)) (then (return (i32.const -3))))
-        (if (i32.eqz (mem.eq (mem.read_ref (local.get $sub) (i32.const 0)) (mem.const_str $s_tag)))
+        (if (i32.eqz (mem.eq (mem.read_ref_ro (local.get $sub) (i32.const 0)) (mem.const_str $s_tag)))
           (then (return (i32.const -4))))
         ;; 30 + 20 + 99 = 149
         (i32.add (mem.read_i32 (local.get $outer) (i32.const 4))

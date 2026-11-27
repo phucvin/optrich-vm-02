@@ -18,28 +18,28 @@
 ;; Run: ./build/optrich-vm --gc-stats examples/09_rust_trait_dispatch.wat main
 (module
   ;; --- Concrete Type 1: `Article` (bytes[0..4) = words, bytes[4..8) = likes) ---
-  (func $article_base (param $self handle) (result i32)
+  (func $article_base (param $self ro_handle) (result i32)
     (i32.add (mem.read_i32 (local.get $self) (i32.const 0))
              (mem.read_i32 (local.get $self) (i32.const 4))))
 
-  (func $article_boost (param $self handle) (param $bonus i32) (result i32)
+  (func $article_boost (param $self ro_handle) (param $bonus i32) (result i32)
     (i32.add (call $article_base (local.get $self)) (local.get $bonus)))
 
   ;; Monomorphized `eval::<Article>` — direct `call`, zero vtable lookup!
-  (func $eval_Article (param $item handle) (param $bonus i32) (result i32)
+  (func $eval_Article (param $item ro_handle) (param $bonus i32) (result i32)
     (i32.add
       (call $article_base  (local.get $item))
       (call $article_boost (local.get $item) (local.get $bonus))))
 
   ;; --- Concrete Type 2: `Tweet` (bytes[0..4) = retweets) ---
-  (func $tweet_base (param $self handle) (result i32)
+  (func $tweet_base (param $self ro_handle) (result i32)
     (i32.mul (mem.read_i32 (local.get $self) (i32.const 0)) (i32.const 2)))
 
-  (func $tweet_boost (param $self handle) (param $bonus i32) (result i32)
+  (func $tweet_boost (param $self ro_handle) (param $bonus i32) (result i32)
     (i32.mul (mem.read_i32 (local.get $self) (i32.const 0)) (local.get $bonus)))
 
   ;; Monomorphized `eval::<Tweet>` — direct `call`, zero vtable lookup!
-  (func $eval_Tweet (param $item handle) (param $bonus i32) (result i32)
+  (func $eval_Tweet (param $item ro_handle) (param $bonus i32) (result i32)
     (i32.add
       (call $tweet_base  (local.get $item))
       (call $tweet_boost (local.get $item) (local.get $bonus))))

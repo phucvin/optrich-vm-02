@@ -295,7 +295,7 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         stack_base[idx].f64 = v;
     };
     auto set_handle = [&](size_t idx, FatHandle h) {
-        stack_base[idx].type = ValType::Handle;
+        stack_base[idx].type = h.is_readonly() ? ValType::RoHandle : ValType::RwHandle;
         stack_base[idx].handle = h;
     };
     auto set_funcref = [&](size_t idx, FuncRef f) {
@@ -428,8 +428,10 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         &&L_MemWriteI64,
         &&L_MemWriteF32,
         &&L_MemWriteF64,
-        &&L_MemReadRef,
+        &&L_MemReadRefRw,
+        &&L_MemReadRefRo,
         &&L_MemWriteRef,
+        &&L_MemWriteRefRo,
         &&L_MemReadFunc,
         &&L_MemWriteFunc,
         &&L_MemCopy,
@@ -520,7 +522,7 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         size_t ret_dst = locals_base;
         if (res_count == 1) {
             const Value& rv = stack_base[sp - 1];
-            if (static_cast<uint8_t>(rv.type) < static_cast<uint8_t>(ValType::Handle)) {
+            if (static_cast<uint8_t>(rv.type) < static_cast<uint8_t>(ValType::RwHandle)) {
                 stack_base[ret_dst].type = rv.type;
                 stack_base[ret_dst].i64 = rv.i64;
             } else {
@@ -960,7 +962,18 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
 
     // --- Reference Slot Ops ---
 
-    CASE_OP(MemReadRef) {
+    CASE_OP(MemReadRefRw) {
+        uint32_t slot = static_cast<uint32_t>(stack_base[--sp].i32);
+        FatHandle h   = stack_base[sp - 1].handle;
+        FatHandle res = store.read_ref(h.id, slot);
+        if (!res.is_null() && res.is_readonly()) {
+            throw Trap("mem.read_ref_rw: handle is read-only");
+        }
+        set_handle(sp - 1, res);
+        DISPATCH();
+    }
+
+    CASE_OP(MemReadRefRo) {
         uint32_t slot = static_cast<uint32_t>(stack_base[--sp].i32);
         FatHandle h   = stack_base[sp - 1].handle;
         set_handle(sp - 1, store.read_ref(h.id, slot));
@@ -971,6 +984,17 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         FatHandle child = stack_base[--sp].handle;
         uint32_t slot   = static_cast<uint32_t>(stack_base[--sp].i32);
         FatHandle h     = stack_base[--sp].handle;
+        store.write_ref(h.id, slot, child.id);
+        DISPATCH();
+    }
+
+    CASE_OP(MemWriteRefRo) {
+        FatHandle child = stack_base[--sp].handle;
+        uint32_t slot   = static_cast<uint32_t>(stack_base[--sp].i32);
+        FatHandle h     = stack_base[--sp].handle;
+        if (!child.is_null() && !child.is_readonly()) {
+            child = store.as_readonly(child.id);
+        }
         store.write_ref(h.id, slot, child.id);
         DISPATCH();
     }

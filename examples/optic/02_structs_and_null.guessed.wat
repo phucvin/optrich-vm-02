@@ -9,7 +9,7 @@
 (module
   (import "host" "trace_f64"  (func $trace_f64  (param ro_handle f64)))
   (import "host" "trace_str"  (func $trace_str  (param ro_handle ro_handle)))
-  (import "host" "trace_meta" (func $trace_meta (param ro_handle handle)))
+  (import "host" "trace_meta" (func $trace_meta (param ro_handle ro_handle)))
 
   (string $s_root      "root")
   (string $s_left      "left")
@@ -32,11 +32,9 @@
     ;; refs[1], refs[2] are null-initialized by mem.alloc
     (local.get $e))
 
-  ;; NOTE (Spec Friction #1): `cur` must be `handle` (not `rw_handle`) because
-  ;; `mem.read_ref` returns dynamic `handle` in Optrich WAT.
   (func $Entry__insert (param $self rw_handle) (param $node rw_handle)
-    (local $cur handle)
-    (local $next handle)
+    (local $cur rw_handle)
+    (local $next rw_handle)
     (local.set $cur (local.get $self))
     (block $break
       (loop $cont
@@ -44,14 +42,14 @@
               (mem.read_i32 (local.get $node) (i32.const 0))
               (mem.read_i32 (local.get $cur)  (i32.const 0)))
           (then
-            (local.set $next (mem.read_ref (local.get $cur) (i32.const 1)))
+            (local.set $next (mem.read_ref_rw (local.get $cur) (i32.const 1)))
             (if (mem.is_null (local.get $next))
               (then
                 (mem.write_ref (local.get $cur) (i32.const 1) (local.get $node))
                 (return)))
             (local.set $cur (local.get $next)))
           (else
-            (local.set $next (mem.read_ref (local.get $cur) (i32.const 2)))
+            (local.set $next (mem.read_ref_rw (local.get $cur) (i32.const 2)))
             (if (mem.is_null (local.get $next))
               (then
                 (mem.write_ref (local.get $cur) (i32.const 2) (local.get $node))
@@ -59,9 +57,8 @@
             (local.set $cur (local.get $next))))
         (br $cont))))
 
-  ;; NOTE (Spec Friction #2): `cur` is `handle` because `cur.left`/`cur.right` come from `mem.read_ref`.
   (func $find_score (param $root ro_handle) (param $target_id i32) (result f64)
-    (local $cur handle)
+    (local $cur ro_handle)
     (local.set $cur (local.get $root))
     (block $break
       (loop $cont
@@ -70,29 +67,27 @@
           (then
             (return (mem.read_f64 (local.get $cur) (i32.const 8)))))
         (local.set $cur
-          (if (result handle)
+          (if (result ro_handle)
             (i32.lt_s (local.get $target_id) (mem.read_i32 (local.get $cur) (i32.const 0)))
-            (then (mem.read_ref (local.get $cur) (i32.const 1)))
-            (else (mem.read_ref (local.get $cur) (i32.const 2)))))
+            (then (mem.read_ref_ro (local.get $cur) (i32.const 1)))
+            (else (mem.read_ref_ro (local.get $cur) (i32.const 2)))))
         (br $cont)))
     (f64.const -1.0))
 
-  ;; NOTE (Spec Friction #3): returning `str` (`ro_handle`) from `mem.read_ref` requires
-  ;; wrapping with `mem.readonly` to satisfy static `ro_handle` return type!
   (func $find_name (param $root ro_handle) (param $target_id i32) (result ro_handle)
-    (local $cur handle)
+    (local $cur ro_handle)
     (local.set $cur (local.get $root))
     (block $break
       (loop $cont
         (br_if $break (mem.is_null (local.get $cur)))
         (if (i32.eq (local.get $target_id) (mem.read_i32 (local.get $cur) (i32.const 0)))
           (then
-            (return (mem.readonly (mem.read_ref (local.get $cur) (i32.const 0))))))
+            (return (mem.read_ref_ro (local.get $cur) (i32.const 0)))))
         (local.set $cur
-          (if (result handle)
+          (if (result ro_handle)
             (i32.lt_s (local.get $target_id) (mem.read_i32 (local.get $cur) (i32.const 0)))
-            (then (mem.read_ref (local.get $cur) (i32.const 1)))
-            (else (mem.read_ref (local.get $cur) (i32.const 2)))))
+            (then (mem.read_ref_ro (local.get $cur) (i32.const 1)))
+            (else (mem.read_ref_ro (local.get $cur) (i32.const 2)))))
         (br $cont)))
     (mem.const_str $s_not_found))
 

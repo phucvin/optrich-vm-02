@@ -34,31 +34,31 @@
     (local.get $hdr))
 
   ;; Return current number of elements in the RefVec.
-  (func $vec_len (param $v handle) (result i32)
+  (func $vec_len (param $v ro_handle) (result i32)
     (mem.read_i32 (local.get $v) (i32.const 0)))
 
   ;; Return element handle at index `idx` (traps if out of bounds).
-  (func $vec_get (param $v handle) (param $idx i32) (result handle)
+  (func $vec_get (param $v ro_handle) (param $idx i32) (result ro_handle)
     (local $len i32)
-    (local $backing handle)
+    (local $backing ro_handle)
     (local.set $len (mem.read_i32 (local.get $v) (i32.const 0)))
     (if (i32.ge_u (local.get $idx) (local.get $len))
       (then (unreachable)))
-    (local.set $backing (mem.read_ref (local.get $v) (i32.const 0)))
-    (mem.read_ref (local.get $backing) (local.get $idx)))
+    (local.set $backing (mem.read_ref_ro (local.get $v) (i32.const 0)))
+    (mem.read_ref_ro (local.get $backing) (local.get $idx)))
 
   ;; Append a handle to the RefVec, doubling the backing ref array when full.
-  (func $vec_push (param $v rw_handle) (param $item handle)
+  (func $vec_push (param $v rw_handle) (param $item ro_handle)
     (local $len i32)
     (local $cap i32)
     (local $new_cap i32)
-    (local $backing handle)
+    (local $backing rw_handle)
     (local $new_backing rw_handle)
     (local $i i32)
 
     (local.set $len (mem.read_i32 (local.get $v) (i32.const 0)))
     (local.set $cap (mem.read_i32 (local.get $v) (i32.const 4)))
-    (local.set $backing (mem.read_ref (local.get $v) (i32.const 0)))
+    (local.set $backing (mem.read_ref_rw (local.get $v) (i32.const 0)))
 
     (if (i32.ge_u (local.get $len) (local.get $cap))
       (then
@@ -72,7 +72,7 @@
             (mem.write_ref
               (local.get $new_backing)
               (local.get $i)
-              (mem.read_ref (local.get $backing) (local.get $i)))
+              (mem.read_ref_ro (local.get $backing) (local.get $i)))
             (local.set $i (i32.add (local.get $i) (i32.const 1)))
             (br $copy_loop)))
         ;; Swap in new backing block and updated capacity

@@ -5,13 +5,13 @@
 ;;
 ;; Run: ./build/optrich-vm examples/08_closure.wat main
 (module
-  (type $fn_i32_to_i32 (func (param handle i32) (result i32)))
+  (type $fn_i32_to_i32 (func (param ro_handle i32) (result i32)))
 
   ;; Shared vtable for all `adder` closures
-  (global $adder_vt (mut handle) (handle.null))
+  (global $adder_vt (mut ro_handle) (handle.null))
 
   ;; Closure body: returns captured `k` + `x`
-  (func $adder_body (param $env handle) (param $x i32) (result i32)
+  (func $adder_body (param $env ro_handle) (param $x i32) (result i32)
     (i32.add (mem.read_i32 (local.get $env) (i32.const 0)) (local.get $x)))
 
   ;; Constructor: make_adder(k) -> closure handle
@@ -31,11 +31,11 @@
     (mem.readonly (local.get $cl)))
 
   ;; Generic closure invocation: call_closure(cl, arg) -> i32
-  (func $call_closure (param $cl handle) (param $arg i32) (result i32)
+  (func $call_closure (param $cl ro_handle) (param $arg i32) (result i32)
     (call_ref (type $fn_i32_to_i32)
       (local.get $cl)                                                   ;; captured env
       (local.get $arg)                                                  ;; argument
-      (mem.read_func (mem.read_ref (local.get $cl) (i32.const 0)) (i32.const 0))))
+      (mem.read_func (mem.read_ref_ro (local.get $cl) (i32.const 0)) (i32.const 0))))
 
   ;; Entry point: add10(5) = 15, add100(5) = 105 => 120
   (func (export "main") (result i32)

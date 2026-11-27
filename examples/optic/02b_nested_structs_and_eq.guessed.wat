@@ -3,7 +3,7 @@
 ;; Rect : bytes[0..4)=w, bytes[4..8)=h, refs[0]=origin => mem.alloc(8, 1)
 (module
   (import "host" "trace_i32"  (func $trace_i32  (param ro_handle i32)))
-  (import "host" "trace_meta" (func $trace_meta (param ro_handle handle)))
+  (import "host" "trace_meta" (func $trace_meta (param ro_handle ro_handle)))
 
   (string $l1 "step1.same_id")
   (string $l2 "step2.diff_id")
@@ -47,7 +47,7 @@
         (br_if $break (i32.ge_s (local.get $i) (local.get $end)))
         (local.set $acc
           (i32.add (local.get $acc)
-                   (mem.read_i32 (mem.read_ref (local.get $pts) (local.get $i)) (i32.const 0))))
+                   (mem.read_i32 (mem.read_ref_ro (local.get $pts) (local.get $i)) (i32.const 0))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $cont)))
     (local.get $acc))
@@ -77,7 +77,7 @@
 
     (call $trace_meta (mem.const_str $l4) (local.get $r))
     (call $trace_i32 (mem.const_str $l5)
-      (mem.read_i32 (mem.read_ref (local.get $r) (i32.const 0)) (i32.const 0)))
+      (mem.read_i32 (mem.read_ref_ro (local.get $r) (i32.const 0)) (i32.const 0)))
     (call $trace_i32 (mem.const_str $l6) (call $Rect__area (mem.readonly (local.get $r))))
 
     (local.set $pts (mem.alloc (i32.const 0) (i32.const 3)))

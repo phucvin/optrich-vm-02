@@ -7,7 +7,7 @@
 (module
   (import "host" "trace_i32"  (func $trace_i32  (param ro_handle i32)))
   (import "host" "trace_str"  (func $trace_str  (param ro_handle ro_handle)))
-  (import "host" "trace_meta" (func $trace_meta (param ro_handle handle)))
+  (import "host" "trace_meta" (func $trace_meta (param ro_handle ro_handle)))
   (import "host" "trace_gc"   (func $trace_gc   (param ro_handle)))
 
   (string $s_csv "alpha,beta,gamma,delta")
@@ -32,16 +32,16 @@
     (mem.write_ref (local.get $v) (i32.const 0) (local.get $buf))
     (local.get $v))
 
-  (func $Vec_ref__push (param $v rw_handle) (param $item handle)
+  (func $Vec_ref__push (param $v rw_handle) (param $item ro_handle)
     (local $len i32)
     (local $cap i32)
-    (local $buf handle)
+    (local $buf rw_handle)
     (local $new_cap i32)
     (local $new_buf rw_handle)
 
     (local.set $len (mem.read_i32 (local.get $v) (i32.const 0)))
     (local.set $cap (mem.read_i32 (local.get $v) (i32.const 4)))
-    (local.set $buf (mem.read_ref (local.get $v) (i32.const 0)))
+    (local.set $buf (mem.read_ref_rw (local.get $v) (i32.const 0)))
 
     (if (i32.ge_s (local.get $len) (local.get $cap))
       (then
@@ -58,14 +58,14 @@
     (mem.write_ref (local.get $buf) (local.get $len) (local.get $item))
     (mem.write_i32 (local.get $v) (i32.const 0) (i32.add (local.get $len) (i32.const 1))))
 
-  (func $Vec_ref__len (param $v handle) (result i32)
+  (func $Vec_ref__len (param $v ro_handle) (result i32)
     (mem.read_i32 (local.get $v) (i32.const 0)))
 
-  (func $Vec_ref__get (param $v handle) (param $idx i32) (result handle)
+  (func $Vec_ref__get (param $v ro_handle) (param $idx i32) (result ro_handle)
     ;; Bounds check against logical len (not just backing cap)
     (if (i32.ge_u (local.get $idx) (mem.read_i32 (local.get $v) (i32.const 0)))
       (then (unreachable)))
-    (mem.read_ref (mem.read_ref (local.get $v) (i32.const 0)) (local.get $idx)))
+    (mem.read_ref_ro (mem.read_ref_ro (local.get $v) (i32.const 0)) (local.get $idx)))
 
   ;; --- User functions ---
   (func $split_byte (param $input ro_handle) (param $sep i32) (result rw_handle)
@@ -114,11 +114,10 @@
 
     (local.set $parts (call $split_byte (mem.const_str $s_csv) (i32.const 44)))
     (call $trace_i32 (mem.const_str $l1) (call $Vec_ref__len (local.get $parts)))
-    ;; NOTE: mem.readonly needed here because Vec_ref__get returns dynamic `handle`
-    (call $trace_str (mem.const_str $l2) (mem.readonly (call $Vec_ref__get (local.get $parts) (i32.const 0))))
-    (call $trace_str (mem.const_str $l3) (mem.readonly (call $Vec_ref__get (local.get $parts) (i32.const 1))))
-    (call $trace_str (mem.const_str $l4) (mem.readonly (call $Vec_ref__get (local.get $parts) (i32.const 2))))
-    (call $trace_str (mem.const_str $l5) (mem.readonly (call $Vec_ref__get (local.get $parts) (i32.const 3))))
+    (call $trace_str (mem.const_str $l2) (call $Vec_ref__get (local.get $parts) (i32.const 0)))
+    (call $trace_str (mem.const_str $l3) (call $Vec_ref__get (local.get $parts) (i32.const 1)))
+    (call $trace_str (mem.const_str $l4) (call $Vec_ref__get (local.get $parts) (i32.const 2)))
+    (call $trace_str (mem.const_str $l5) (call $Vec_ref__get (local.get $parts) (i32.const 3)))
     (call $trace_meta (mem.const_str $l6) (call $Vec_ref__get (local.get $parts) (i32.const 2)))
 
     (local.set $hdr (call $make_detached_header))

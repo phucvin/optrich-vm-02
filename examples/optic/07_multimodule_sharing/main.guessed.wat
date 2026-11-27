@@ -1,7 +1,7 @@
 ;; Guessed WAT for examples/optic/07_multimodule_sharing/main.opc
 (module
   (import "host"     "trace_i32"         (func $trace_i32         (param ro_handle i32)))
-  (import "host"     "trace_meta"        (func $trace_meta        (param ro_handle handle)))
+  (import "host"     "trace_meta"        (func $trace_meta        (param ro_handle ro_handle)))
   (import "host"     "io_open_reader"    (func $io_open_reader    (param ro_handle) (result ro_handle)))
   (import "host"     "io_read"           (func $io_read           (param ro_handle rw_handle) (result i32)))
   (import "host"     "io_write"          (func $io_write          (param ro_handle ro_handle) (result i32)))

@@ -85,8 +85,8 @@ struct Entry {
 // Allocates: (mem.alloc (i32.const 16) (i32.const 3))
 ```
 
-**Important VM Note on `mem.read_ref`:**
-`mem.read_ref` returns dynamic `handle` in Optrich WAT (the VM does not know statically whether a ref slot held `rw_handle` or `ro_handle`). Therefore, in WAT lowering, locals/expressions receiving a `mem.read_ref` result use `handle` when needed, or `ro_handle` after `mem.readonly` if the field is `ro`. *(See Open Question #3 — we may want typed ref reads or `handle` locals for struct fields.)*
+**Typed Reference Slot Reads (`mem.read_ref_rw` / `mem.read_ref_ro`):**
+Optrich VM 02 has only two handle types: `rw_handle` and `ro_handle` (with static subtyping `rw_handle <: ro_handle`). Reading a reference slot uses `mem.read_ref_rw` (returns `rw_handle`, trapping at runtime if the stored handle is read-only) or `mem.read_ref_ro` (zero-allocation read returning statically read-only `ro_handle`). Writing a `ro_handle` via `mem.write_ref` enforces `as_readonly` so read-only capabilities can never be laundered back into `rw_handle`.
 
 ### 3.1 Inline Nested Structs & `mem.sub_block` *(Implemented)*
 
@@ -110,7 +110,7 @@ By default, nested struct fields (e.g., `origin: Point` inside `Rect`) are store
 #### 2. Compiler Lowering Rules
 * **Flattened layout:** An inline nested struct `Inner` with `(inner_bytes, inner_refs)` is laid out directly inside `Outer`'s split block at static `(base_byte_off, base_ref_off)` (respecting natural alignment for `bytes`).
   * Example: `Rect { w: i32, h: i32, origin: inline Point }` → `mem.alloc(16, 0)` with `w` at `bytes[0..4)`, `h` at `bytes[4..8)`, `origin.x` at `bytes[8..12)`, `origin.y` at `bytes[12..16)`.
-* **Direct field access (zero overhead):** `r.origin.x` compiles directly to `(mem.read_i32 $r (i32.const 8))` (and nested ref fields to `(mem.read_ref $r (i32.const base_ref_off + field_idx))`) — **no `mem.sub_block` is allocated**.
+* **Direct field access (zero overhead):** `r.origin.x` compiles directly to `(mem.read_i32 $r (i32.const 8))` (and nested ref fields to `(mem.read_ref_rw / mem.read_ref_ro $r (i32.const base_ref_off + field_idx))`) — **no `mem.sub_block` is allocated**.
 * **Passing / escaping as a handle:** When `r.origin` is passed to a function, method, `dyn Trait`, or cross-module call expecting a `Point` / `ro Point` handle, emit:
   ```wat
   (mem.sub_block (local.get $r) (i32.const 8) (i32.const 8) (i32.const 0) (i32.const 0))
@@ -213,7 +213,7 @@ Lowers to Wasm `(if (result T) <cond> (then ...) (else ...))` for expressions, o
 ### 5.2 Reference Slices (`[]MyStruct`, `[]str`, `ro []str`)
 * `new [T; n]` → `(mem.alloc (i32.const 0) n)`
 * `s.len` → `(mem.ref_len s)`
-* `s[i]` → `(mem.read_ref s i)`
+* `s[i]` → `(mem.read_ref_rw s i)` (for mutable `T`) or `(mem.read_ref_ro s i)` (for `ro T` / `str`)
 * `s[start..end]` → `(mem.ref_span s start (i32.sub end start))`
 
 ### 5.3 Growable `Vec<T>` (Header + Backing Block Pattern)
@@ -303,7 +303,7 @@ Generic structs (`struct Box<T>`, `struct Pair<A, B>`) and generic functions (`f
 * **Dynamic dispatch (`dyn Trait` via frozen vtables + `call_ref`):**
   * Each `impl Trait for Struct` caches one frozen vtable block (`mem.alloc_vtable(M)` + `mem.write_func` + `mem.readonly`) in a module global.
   * A `dyn Trait` value is a frozen 2-ref split block `mem.alloc(0, 2)` (`refs[0]` = concrete data handle, `refs[1]` = frozen vtable handle).
-  * Method calls dispatch via `(call_ref (type $sig) (mem.read_ref $obj 0) <args...> (mem.read_func (mem.read_ref $obj 1) <slot>))`. Because `FuncRef` binds its defining `ModuleInstance*`, `dyn Trait` works identically within a module and across modules with zero indirect tables.
+  * Method calls dispatch via `(call_ref (type $sig) (mem.read_ref_ro/rw $obj 0) <args...> (mem.read_func (mem.read_ref_ro $obj 1) <slot>))`. Because `FuncRef` binds its defining `ModuleInstance*`, `dyn Trait` works identically within a module and across modules with zero indirect tables.
 
 ---
 
@@ -322,5 +322,5 @@ Generic structs (`struct Box<T>`, `struct Pair<A, B>`) and generic functions (`f
 
 1. **Implicit vs. explicit `readonly(...)`:** Should passing `[]u8` to a `ro []u8` parameter require explicit `readonly(buf)` or auto-insert `mem.readonly`? (Explicit makes the capability downgrade visible; implicit is more ergonomic.)
 2. **Shallow vs. transitive `ro T`:** If `e: ro Entry` has a mutable child field `child: Node`, should `e.child` be `ro Node` (transitive) or `Node` (shallow)?
-3. **WAT `mem.read_ref` return type:** `mem.read_ref` currently returns dynamic `handle` in Optrich VM. When a struct stores a `rw_handle` or `ro_handle` in a `refs` slot and reads it back, WAT requires `handle` (not `rw_handle`/`ro_handle`) unless the VM or compiler knows the static type. Let's observe how much friction this causes in `.guessed.wat` during Iteration 1!
+3. ~~**WAT `mem.read_ref` return type:**~~ **Resolved:** Removed dynamic `handle` from Optrich VM 02 (keeping only `rw_handle` and `ro_handle` with `rw_handle <: ro_handle`), split `mem.read_ref` into `mem.read_ref_rw` (runtime-checked `rw_handle`) and `mem.read_ref_ro` (`ro_handle`), and enforced `as_readonly` when writing a `ro_handle` via `mem.write_ref`.
 4. ~~**VM `mem.copy_refs` opcode:**~~ **Resolved:** Added `mem.copy_refs(dst, dst_off, src, src_off, count)` and made `mem.readonly` a zero-allocation no-op on already-`ro` handles (eliminating redundant wrapper blocks on `mem.readonly(mem.read_ref(...))`).

@@ -10,7 +10,7 @@
   (import "host" "trace_i32"  (func $trace_i32  (param ro_handle i32)))
   (import "host" "trace_f64"  (func $trace_f64  (param ro_handle f64)))
   (import "host" "trace_str"  (func $trace_str  (param ro_handle ro_handle)))
-  (import "host" "trace_meta" (func $trace_meta (param ro_handle handle)))
+  (import "host" "trace_meta" (func $trace_meta (param ro_handle ro_handle)))
 
   (string $l1 "step1.box_i32_meta")
   (string $l2 "step2.box_str_meta")
@@ -84,7 +84,7 @@
         (br_if $break (i32.ge_s (local.get $i) (local.get $end)))
         (local.set $sum
           (i32.add (local.get $sum)
-                   (call $Task__score (mem.readonly (mem.read_ref (local.get $items) (local.get $i))))))
+                   (call $Task__score (mem.read_ref_ro (local.get $items) (local.get $i)))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $cont)))
     (local.get $sum))
@@ -99,7 +99,7 @@
         (br_if $break (i32.ge_s (local.get $i) (local.get $end)))
         (local.set $sum
           (i32.add (local.get $sum)
-                   (call $Bonus__score (mem.readonly (mem.read_ref (local.get $items) (local.get $i))))))
+                   (call $Bonus__score (mem.read_ref_ro (local.get $items) (local.get $i)))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $cont)))
     (local.get $sum))
@@ -119,7 +119,7 @@
     (call $trace_meta (mem.const_str $l1) (local.get $bi))
     (call $trace_meta (mem.const_str $l2) (local.get $bs))
     (call $trace_i32 (mem.const_str $l3) (mem.read_i32 (local.get $bi) (i32.const 0)))
-    (call $trace_str (mem.const_str $l4) (mem.readonly (mem.read_ref (local.get $bs) (i32.const 0))))
+    (call $trace_str (mem.const_str $l4) (mem.read_ref_ro (local.get $bs) (i32.const 0)))
 
     (local.set $p1 (call $Pair_i32_str__new (i32.const 7) (mem.const_str $s_lucky)))
     (local.set $p2 (call $Pair_f64_i32__new (f64.const 2.5) (i32.const 4)))

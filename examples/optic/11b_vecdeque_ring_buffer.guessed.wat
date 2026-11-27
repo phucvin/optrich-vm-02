@@ -44,7 +44,7 @@
     (local $len i32)
     (local $cap i32)
     (local $new_cap i32)
-    (local $old_buf handle)
+    (local $old_buf ro_handle)
     (local $new_buf rw_handle)
     (local $first_part i32)
     (local $second_part i32)
@@ -53,7 +53,7 @@
     (local.set $len  (mem.read_i32 (local.get $d) (i32.const 4)))
     (local.set $cap  (mem.read_i32 (local.get $d) (i32.const 8)))
     (local.set $new_cap (i32.shl (local.get $cap) (i32.const 1)))
-    (local.set $old_buf (mem.read_ref (local.get $d) (i32.const 0)))
+    (local.set $old_buf (mem.read_ref_ro (local.get $d) (i32.const 0)))
     (local.set $new_buf (mem.alloc (i32.shl (local.get $new_cap) (i32.const 2)) (i32.const 0)))
 
     ;; Linearize wrapped ring buffer via up to 2 bulk mem.copy calls
@@ -87,7 +87,7 @@
         (local.set $cap (mem.read_i32 (local.get $d) (i32.const 8)))))
     (local.set $head (mem.read_i32 (local.get $d) (i32.const 0)))
     (local.set $idx (i32.and (i32.add (local.get $head) (local.get $len)) (i32.sub (local.get $cap) (i32.const 1))))
-    (mem.write_i32 (mem.read_ref (local.get $d) (i32.const 0)) (i32.shl (local.get $idx) (i32.const 2)) (local.get $val))
+    (mem.write_i32 (mem.read_ref_rw (local.get $d) (i32.const 0)) (i32.shl (local.get $idx) (i32.const 2)) (local.get $val))
     (mem.write_i32 (local.get $d) (i32.const 4) (i32.add (local.get $len) (i32.const 1))))
 
   (func $VecDeque_i32__push_front (param $d rw_handle) (param $val i32)
@@ -103,7 +103,7 @@
     (local.set $head (i32.and (i32.sub (mem.read_i32 (local.get $d) (i32.const 0)) (i32.const 1))
                               (i32.sub (local.get $cap) (i32.const 1))))
     (mem.write_i32 (local.get $d) (i32.const 0) (local.get $head))
-    (mem.write_i32 (mem.read_ref (local.get $d) (i32.const 0)) (i32.shl (local.get $head) (i32.const 2)) (local.get $val))
+    (mem.write_i32 (mem.read_ref_rw (local.get $d) (i32.const 0)) (i32.shl (local.get $head) (i32.const 2)) (local.get $val))
     (mem.write_i32 (local.get $d) (i32.const 4) (i32.add (local.get $len) (i32.const 1))))
 
   ;; Returns unboxed Option<i32> = (is_some: i32, val: i32)
@@ -116,7 +116,7 @@
     (if (i32.eqz (local.get $len)) (then (return (i32.const 0) (i32.const 0))))
     (local.set $head (mem.read_i32 (local.get $d) (i32.const 0)))
     (local.set $cap  (mem.read_i32 (local.get $d) (i32.const 8)))
-    (local.set $val (mem.read_i32 (mem.read_ref (local.get $d) (i32.const 0)) (i32.shl (local.get $head) (i32.const 2))))
+    (local.set $val (mem.read_i32 (mem.read_ref_ro (local.get $d) (i32.const 0)) (i32.shl (local.get $head) (i32.const 2))))
     (mem.write_i32 (local.get $d) (i32.const 0)
       (i32.and (i32.add (local.get $head) (i32.const 1)) (i32.sub (local.get $cap) (i32.const 1))))
     (mem.write_i32 (local.get $d) (i32.const 4) (i32.sub (local.get $len) (i32.const 1)))
@@ -135,7 +135,7 @@
     (local.set $head (mem.read_i32 (local.get $d) (i32.const 0)))
     (local.set $cap  (mem.read_i32 (local.get $d) (i32.const 8)))
     (local.set $idx (i32.and (i32.add (local.get $head) (local.get $len)) (i32.sub (local.get $cap) (i32.const 1))))
-    (local.set $val (mem.read_i32 (mem.read_ref (local.get $d) (i32.const 0)) (i32.shl (local.get $idx) (i32.const 2))))
+    (local.set $val (mem.read_i32 (mem.read_ref_ro (local.get $d) (i32.const 0)) (i32.shl (local.get $idx) (i32.const 2))))
     (mem.write_i32 (local.get $d) (i32.const 4) (local.get $len))
     (i32.const 1) (local.get $val))
 

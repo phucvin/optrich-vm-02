@@ -50,19 +50,19 @@ Instead of tables and integer slot IDs, Optrich VM 02 provides:
 ### Direct Dispatch Inside `shape.wat`
 
 ```wat
-(type $area_sig  (func (param handle) (result i32)))
-(type $scale_sig (func (param handle i32)))
+(type $area_sig  (func (param ro_handle) (result i32)))
+(type $scale_sig (func (param rw_handle i32)))
 
-(func (export "area") (param $s handle) (result i32)
+(func (export "area") (param $s ro_handle) (result i32)
   (call_ref (type $area_sig)
-    (mem.read_ref  (local.get $s) (i32.const 0))
-    (mem.read_func (mem.read_ref (local.get $s) (i32.const 1)) (i32.const 0))))
+    (mem.read_ref_ro (local.get $s) (i32.const 0))
+    (mem.read_func (mem.read_ref_ro (local.get $s) (i32.const 1)) (i32.const 0))))
 
-(func (export "scale") (param $s handle) (param $factor i32)
+(func (export "scale") (param $s ro_handle) (param $factor i32)
   (call_ref (type $scale_sig)
-    (mem.read_ref  (local.get $s) (i32.const 0))
+    (mem.read_ref_rw (local.get $s) (i32.const 0))
     (local.get $factor)
-    (mem.read_func (mem.read_ref (local.get $s) (i32.const 1)) (i32.const 1))))
+    (mem.read_func (mem.read_ref_ro (local.get $s) (i32.const 1)) (i32.const 1))))
 ```
 
 See [`examples/06_polymorphic_interfaces/`](../examples/06_polymorphic_interfaces/) for the complete runnable 4-module example (`shape.wat`, `rect.wat`, `square.wat`, `main.wat`).

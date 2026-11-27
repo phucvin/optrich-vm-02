@@ -1,12 +1,12 @@
 ;; Guessed WAT for examples/optic/09b_cross_module_callbacks/main.opc
 (module
   (import "host" "trace_i32" (func $trace_i32 (param ro_handle i32)))
-  (import "algo" "map_sum"   (func $map_sum   (param ro_handle handle) (result i32)))
+  (import "algo" "map_sum"   (func $map_sum   (param ro_handle ro_handle) (result i32)))
 
-  (global $affine_vt (mut handle) (handle.null))
+  (global $affine_vt (mut ro_handle) (handle.null))
   (string $l1 "step1.cross_mod_map_sum")
 
-  (func $affine_body (param $env handle) (param $x i32) (result i32)
+  (func $affine_body (param $env ro_handle) (param $x i32) (result i32)
     (i32.add
       (i32.mul (local.get $x) (mem.read_i32 (local.get $env) (i32.const 0)))
       (mem.read_i32 (local.get $env) (i32.const 4))))

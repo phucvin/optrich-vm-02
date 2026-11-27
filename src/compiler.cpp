@@ -16,7 +16,6 @@ std::optional<ValType> parse_val_type(std::string_view s) {
     if (s == "i64")       return ValType::I64;
     if (s == "f32")       return ValType::F32;
     if (s == "f64")       return ValType::F64;
-    if (s == "handle")    return ValType::Handle;
     if (s == "rw_handle") return ValType::RwHandle;
     if (s == "ro_handle") return ValType::RoHandle;
     if (s == "funcref")   return ValType::FuncRef;
@@ -305,7 +304,7 @@ private:
 
     ValType pop_handle(size_t line, bool require_writable = false) {
         ValType actual = pop_any(line);
-        if (actual == kUnknownType) return ValType::Handle;
+        if (actual == kUnknownType) return require_writable ? ValType::RwHandle : ValType::RoHandle;
         if (!is_handle_type(actual)) {
             throw CompileError(std::string("type mismatch: expected handle, got ") +
                                val_type_name(actual) + " at line " + std::to_string(line));
@@ -963,7 +962,7 @@ private:
             } else if (t1 == t2) {
                 push_type(t1);
             } else if (is_handle_type(t1) && is_handle_type(t2)) {
-                push_type(ValType::Handle);
+                push_type(ValType::RoHandle);
             } else {
                 throw CompileError("select operand type mismatch at line " + std::to_string(line));
             }
@@ -1040,7 +1039,7 @@ private:
             return;
         }
         if (op == "handle.null") {
-            push_type(ValType::Handle);
+            push_type(ValType::RwHandle);
             fn_.code.push_back(Instr::make(OpCode::HandleNull));
             return;
         }
@@ -1186,18 +1185,25 @@ private:
         if (op == "mem.write_f32") { emit_mem_write(OpCode::MemWriteF32, ValType::F32); return; }
         if (op == "mem.write_f64") { emit_mem_write(OpCode::MemWriteF64, ValType::F64); return; }
 
-        if (op == "mem.read_ref") {
+        if (op == "mem.read_ref_rw") {
             pop_expected(ValType::I32, line);
             pop_handle(line, false);
-            push_type(ValType::Handle);
-            fn_.code.push_back(Instr::make(OpCode::MemReadRef));
+            push_type(ValType::RwHandle);
+            fn_.code.push_back(Instr::make(OpCode::MemReadRefRw));
+            return;
+        }
+        if (op == "mem.read_ref_ro") {
+            pop_expected(ValType::I32, line);
+            pop_handle(line, false);
+            push_type(ValType::RoHandle);
+            fn_.code.push_back(Instr::make(OpCode::MemReadRefRo));
             return;
         }
         if (op == "mem.write_ref") {
-            pop_handle(line, false);
+            ValType child_t = pop_handle(line, false);
             pop_expected(ValType::I32, line);
             pop_handle(line, true);
-            fn_.code.push_back(Instr::make(OpCode::MemWriteRef));
+            fn_.code.push_back(Instr::make(child_t == ValType::RoHandle ? OpCode::MemWriteRefRo : OpCode::MemWriteRef));
             return;
         }
         if (op == "mem.read_func") {
@@ -1614,8 +1620,8 @@ CompiledModule compile_module(const SExpr& root) {
                     if (!is_handle_type(g.type)) throw CompileError("global init type mismatch");
                     g.initVal = Value::zero(g.type);
                 } else if (iop == "mem.const_str" && init.children.size() == 2) {
-                    if (g.type != ValType::RoHandle && g.type != ValType::Handle) {
-                        throw CompileError("global mem.const_str requires ro_handle or handle");
+                    if (g.type != ValType::RoHandle) {
+                        throw CompileError("global mem.const_str requires ro_handle");
                     }
                     g.initStrIdx = static_cast<int32_t>(mctx.resolve_or_add_string(init.children[1]));
                 } else {

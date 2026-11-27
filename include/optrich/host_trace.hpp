@@ -66,7 +66,7 @@ inline void register_host_trace(Runtime& rt, std::ostream& out) {
 
     rt.register_host_func(
         "host", "trace_meta",
-        FuncSignature{{ValType::RoHandle, ValType::Handle}, {}},
+        FuncSignature{{ValType::RoHandle, ValType::RoHandle}, {}},
         [&out](MemoryStore& store, const std::vector<Value>& args) -> std::vector<Value> {
             std::string label = read_handle_string(store, args[0].handle);
             const FatHandle& h = args[1].handle;

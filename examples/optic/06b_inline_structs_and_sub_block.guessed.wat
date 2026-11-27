@@ -5,7 +5,7 @@
 (module
   (import "host" "trace_i32"  (func $trace_i32  (param ro_handle i32)))
   (import "host" "trace_str"  (func $trace_str  (param ro_handle ro_handle)))
-  (import "host" "trace_meta" (func $trace_meta (param ro_handle handle)))
+  (import "host" "trace_meta" (func $trace_meta (param ro_handle ro_handle)))
 
   (string $l1  "step1.sprite_meta")
   (string $l2  "step2.direct_x")
@@ -63,7 +63,7 @@
     (local.set $ro_s (mem.readonly (local.get $s)))
     (local.set $ro_p (mem.sub_block (local.get $ro_s) (i32.const 4) (i32.const 8) (i32.const 0) (i32.const 1)))
     (call $trace_meta (mem.const_str $l5) (local.get $ro_p))
-    (call $trace_str (mem.const_str $l6) (mem.readonly (mem.read_ref (local.get $ro_p) (i32.const 0))))
+    (call $trace_str (mem.const_str $l6) (mem.read_ref_ro (local.get $ro_p) (i32.const 0)))
     (local.set $psum (call $read_point_sum (local.get $ro_p)))
     (call $trace_i32 (mem.const_str $l7) (local.get $psum))
 

@@ -22,21 +22,20 @@ enum class ValType : uint8_t {
     I64 = 1,
     F32 = 2,
     F64 = 3,
-    Handle = 4,    // Dynamic capability handle (readOnly checked at runtime)
-    RwHandle = 5,  // Statically read-write handle
-    RoHandle = 6,  // Statically read-only handle (writes rejected at compile time)
-    FuncRef = 7,   // Unforgeable cross-module function reference
+    RwHandle = 4,  // Statically read-write handle
+    RoHandle = 5,  // Statically read-only handle (writes rejected at compile time)
+    FuncRef = 6,   // Unforgeable cross-module function reference
 };
 
 inline bool is_handle_type(ValType t) {
-    return t == ValType::Handle || t == ValType::RwHandle || t == ValType::RoHandle;
+    return t == ValType::RwHandle || t == ValType::RoHandle;
 }
 
 // Can a value of type `from` be used where `to` is expected?
 inline bool is_type_compatible(ValType from, ValType to) {
     if (from == to) return true;
-    // Any specific handle (rw_handle / ro_handle) can upcast to dynamic `handle`.
-    if (to == ValType::Handle && is_handle_type(from)) return true;
+    // A writable handle can be viewed as read-only (static capability subtyping).
+    if (from == ValType::RwHandle && to == ValType::RoHandle) return true;
     return false;
 }
 
@@ -46,7 +45,6 @@ inline const char* val_type_name(ValType t) {
         case ValType::I64:      return "i64";
         case ValType::F32:      return "f32";
         case ValType::F64:      return "f64";
-        case ValType::Handle:   return "handle";
         case ValType::RwHandle: return "rw_handle";
         case ValType::RoHandle: return "ro_handle";
         case ValType::FuncRef:  return "funcref";
@@ -107,7 +105,12 @@ struct Value {
     static Value from_u64(uint64_t v)     { Value val; val.type = ValType::I64;     val.i64 = static_cast<int64_t>(v); return val; }
     static Value from_f32(float v)        { Value val; val.type = ValType::F32;     val.f32 = v; return val; }
     static Value from_f64(double v)       { Value val; val.type = ValType::F64;     val.f64 = v; return val; }
-    static Value from_handle(FatHandle h) { Value val; val.type = ValType::Handle;  val.handle = h; return val; }
+    static Value from_handle(FatHandle h) {
+        Value val;
+        val.type = h.is_readonly() ? ValType::RoHandle : ValType::RwHandle;
+        val.handle = h;
+        return val;
+    }
     static Value from_funcref(FuncRef f)  { Value val; val.type = ValType::FuncRef; val.funcref = f; return val; }
 
     static Value zero(ValType t) {
@@ -116,7 +119,6 @@ struct Value {
             case ValType::I64:      return from_i64(0);
             case ValType::F32:      return from_f32(0.0f);
             case ValType::F64:      return from_f64(0.0);
-            case ValType::Handle:
             case ValType::RwHandle:
             case ValType::RoHandle: {
                 Value val;

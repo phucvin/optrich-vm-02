@@ -1,14 +1,14 @@
 ;; Guessed WAT for examples/optic/09b_cross_module_callbacks/algo.opc
 (module
-  (type $cl_i32_i32 (func (param handle i32) (result i32)))
+  (type $cl_i32_i32 (func (param ro_handle i32) (result i32)))
 
-  (func (export "map_sum") (param $xs ro_handle) (param $f handle) (result i32)
+  (func (export "map_sum") (param $xs ro_handle) (param $f ro_handle) (result i32)
     (local $acc i32)
     (local $i i32)
     (local $end i32)
     (local $fn funcref)
     (local.set $end (i32.shr_u (mem.byte_len (local.get $xs)) (i32.const 2)))
-    (local.set $fn (mem.read_func (mem.read_ref (local.get $f) (i32.const 0)) (i32.const 0)))
+    (local.set $fn (mem.read_func (mem.read_ref_ro (local.get $f) (i32.const 0)) (i32.const 0)))
     (block $break
       (loop $cont
         (br_if $break (i32.ge_s (local.get $i) (local.get $end)))

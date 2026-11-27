@@ -3,13 +3,13 @@
 ;; dyn Shape: frozen mem.alloc(0, 2) -> refs[0]=data, refs[1]=frozen vtable (slot 0=area, slot 1=scale)
 (module
   (import "host" "trace_i32"  (func $trace_i32  (param ro_handle i32)))
-  (import "host" "trace_meta" (func $trace_meta (param ro_handle handle)))
+  (import "host" "trace_meta" (func $trace_meta (param ro_handle ro_handle)))
 
-  (type $sig_area  (func (param handle) (result i32)))
-  (type $sig_scale (func (param handle i32)))
+  (type $sig_area  (func (param ro_handle) (result i32)))
+  (type $sig_scale (func (param rw_handle i32)))
 
-  (global $Rect_Shape_vt   (mut handle) (handle.null))
-  (global $Square_Shape_vt (mut handle) (handle.null))
+  (global $Rect_Shape_vt   (mut ro_handle) (handle.null))
+  (global $Square_Shape_vt (mut ro_handle) (handle.null))
 
   (string $l1 "step1.iter_count")
   (string $l2 "step2.iter_sum")
@@ -36,11 +36,11 @@
     (i32.const 1) (local.get $cur))
 
   ;; --- Rect impl Shape ---
-  (func $Rect__area (param $self handle) (result i32)
+  (func $Rect__area (param $self ro_handle) (result i32)
     (i32.mul (mem.read_i32 (local.get $self) (i32.const 0))
              (mem.read_i32 (local.get $self) (i32.const 4))))
 
-  (func $Rect__scale (param $self handle) (param $factor i32)
+  (func $Rect__scale (param $self rw_handle) (param $factor i32)
     (mem.write_i32 (local.get $self) (i32.const 0)
       (i32.mul (mem.read_i32 (local.get $self) (i32.const 0)) (local.get $factor)))
     (mem.write_i32 (local.get $self) (i32.const 4)
@@ -65,12 +65,12 @@
     (mem.readonly (local.get $obj)))
 
   ;; --- Square impl Shape ---
-  (func $Square__area (param $self handle) (result i32)
+  (func $Square__area (param $self ro_handle) (result i32)
     (local $s i32)
     (local.set $s (mem.read_i32 (local.get $self) (i32.const 0)))
     (i32.mul (local.get $s) (local.get $s)))
 
-  (func $Square__scale (param $self handle) (param $factor i32)
+  (func $Square__scale (param $self rw_handle) (param $factor i32)
     (mem.write_i32 (local.get $self) (i32.const 0)
       (i32.mul (mem.read_i32 (local.get $self) (i32.const 0)) (local.get $factor))))
 
@@ -92,16 +92,16 @@
     (mem.readonly (local.get $obj)))
 
   ;; --- dyn Shape dispatch helpers ---
-  (func $dyn_Shape__area (param $obj handle) (result i32)
+  (func $dyn_Shape__area (param $obj ro_handle) (result i32)
     (call_ref (type $sig_area)
-      (mem.read_ref (local.get $obj) (i32.const 0))
-      (mem.read_func (mem.read_ref (local.get $obj) (i32.const 1)) (i32.const 0))))
+      (mem.read_ref_ro (local.get $obj) (i32.const 0))
+      (mem.read_func (mem.read_ref_ro (local.get $obj) (i32.const 1)) (i32.const 0))))
 
-  (func $dyn_Shape__scale (param $obj handle) (param $factor i32)
+  (func $dyn_Shape__scale (param $obj ro_handle) (param $factor i32)
     (call_ref (type $sig_scale)
-      (mem.read_ref (local.get $obj) (i32.const 0))
+      (mem.read_ref_rw (local.get $obj) (i32.const 0))
       (local.get $factor)
-      (mem.read_func (mem.read_ref (local.get $obj) (i32.const 1)) (i32.const 1))))
+      (mem.read_func (mem.read_ref_ro (local.get $obj) (i32.const 1)) (i32.const 1))))
 
   (func (export "main") (result i32)
     (local $it rw_handle)
@@ -112,7 +112,7 @@
     (local $shapes rw_handle)
     (local $i i32)
     (local $n i32)
-    (local $cur handle)
+    (local $cur ro_handle)
     (local $before_total i32)
     (local $after_total i32)
 
@@ -134,14 +134,14 @@
     (local.set $shapes (mem.alloc (i32.const 0) (i32.const 2)))
     (mem.write_ref (local.get $shapes) (i32.const 0) (call $Rect__as_dyn_Shape (i32.const 3) (i32.const 4)))
     (mem.write_ref (local.get $shapes) (i32.const 1) (call $Square__as_dyn_Shape (i32.const 5)))
-    (call $trace_meta (mem.const_str $l3) (mem.read_ref (local.get $shapes) (i32.const 0)))
+    (call $trace_meta (mem.const_str $l3) (mem.read_ref_ro (local.get $shapes) (i32.const 0)))
 
     (local.set $n (mem.ref_len (local.get $shapes)))
     (local.set $i (i32.const 0))
     (block $done_s
       (loop $lp_s
         (br_if $done_s (i32.ge_s (local.get $i) (local.get $n)))
-        (local.set $cur (mem.read_ref (local.get $shapes) (local.get $i)))
+        (local.set $cur (mem.read_ref_ro (local.get $shapes) (local.get $i)))
         (local.set $before_total (i32.add (local.get $before_total) (call $dyn_Shape__area (local.get $cur))))
         (call $dyn_Shape__scale (local.get $cur) (i32.const 2))
         (local.set $after_total (i32.add (local.get $after_total) (call $dyn_Shape__area (local.get $cur))))

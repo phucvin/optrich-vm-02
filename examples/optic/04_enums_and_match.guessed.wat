@@ -4,7 +4,7 @@
 (module
   (import "host" "trace_i32"  (func $trace_i32  (param ro_handle i32)))
   (import "host" "trace_f64"  (func $trace_f64  (param ro_handle f64)))
-  (import "host" "trace_meta" (func $trace_meta (param ro_handle handle)))
+  (import "host" "trace_meta" (func $trace_meta (param ro_handle ro_handle)))
   (import "host" "trace_gc"   (func $trace_gc   (param ro_handle)))
 
   (string $l1 "step1.circle_area")
@@ -64,7 +64,7 @@
                          (mem.read_f64 (local.get $s) (i32.const 16)))))
       ;; arm Labelled(_, tag)
       (return (f64.convert_i32_s
-                (mem.read_i32 (mem.read_ref (local.get $s) (i32.const 1)) (i32.const 0)))))
+                (mem.read_i32 (mem.read_ref_ro (local.get $s) (i32.const 1)) (i32.const 0)))))
     (unreachable))
 
   ;; In-place variant overwrite with GC-safe nulling of inactive ref slots
@@ -82,9 +82,9 @@
       (then (return (i32.const 1) (local.get $b))))
     (i32.const 0) (i32.const 0))
 
-  ;; Niche-optimized Option<BoxedTag> -> nullable handle (`handle.null` has type `handle`)
-  (func $maybe_tag (param $create i32) (result handle)
-    (if (result handle) (local.get $create)
+  ;; Niche-optimized Option<BoxedTag> -> nullable rw_handle
+  (func $maybe_tag (param $create i32) (result rw_handle)
+    (if (result rw_handle) (local.get $create)
       (then (call $BoxedTag__new (i32.const 77)))
       (else (handle.null))))
 
@@ -97,7 +97,7 @@
     (local $opt_val i32)
     (local $n1 i32)
     (local $n2 i32)
-    (local $t handle)
+    (local $t rw_handle)
     (local $t_code i32)
 
     (local.set $s1 (call $Shape__Circle (f64.const 2.0)))

@@ -10,14 +10,14 @@
 ;;     --gc-stats \
 ;;     examples/06_polymorphic_interfaces/main.wat main
 (module
-  (import "shape"  "area"       (func $area       (param handle) (result i32)))
-  (import "shape"  "scale"      (func $scale      (param handle i32)))
+  (import "shape"  "area"       (func $area       (param ro_handle) (result i32)))
+  (import "shape"  "scale"      (func $scale      (param ro_handle i32)))
   (import "rect"   "new_rect"   (func $new_rect   (param i32 i32) (result ro_handle)))
   (import "square" "new_square" (func $new_square (param i32) (result ro_handle)))
 
   (func (export "main") (result i32)
     (local $shapes rw_handle)
-    (local $s handle)
+    (local $s ro_handle)
     (local $i i32)
     (local $n i32)
     (local $total i32)
@@ -36,7 +36,7 @@
     (block $done
       (loop $lp
         (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
-        (local.set $s (mem.read_ref (local.get $shapes) (local.get $i)))
+        (local.set $s (mem.read_ref_ro (local.get $shapes) (local.get $i)))
         (call $scale (local.get $s) (i32.const 2))
         (local.set $total (i32.add (local.get $total) (call $area (local.get $s))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))

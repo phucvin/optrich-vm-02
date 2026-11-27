@@ -120,7 +120,6 @@ int main(int argc, char** argv) {
                 case ValType::I64: std::cout << results[i].i64 << "\n"; break;
                 case ValType::F32: std::cout << results[i].f32 << "\n"; break;
                 case ValType::F64: std::cout << results[i].f64 << "\n"; break;
-                case ValType::Handle:
                 case ValType::RwHandle:
                 case ValType::RoHandle:
                     std::cout << "handle#" << results[i].handle.id

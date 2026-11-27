@@ -58,7 +58,7 @@
     (local $slen i32)
     (local.set $len (mem.read_i32 (local.get $self) (i32.const 0)))
     (local.set $slen (mem.byte_len (local.get $s)))
-    (mem.copy (mem.read_ref (local.get $self) (i32.const 0)) (local.get $len)
+    (mem.copy (mem.read_ref_rw (local.get $self) (i32.const 0)) (local.get $len)
               (local.get $s) (i32.const 0) (local.get $slen))
     (mem.write_i32 (local.get $self) (i32.const 0) (i32.add (local.get $len) (local.get $slen))))
 
@@ -67,7 +67,7 @@
     (local $k i32)
     (local $i i32)
     (local $len i32)
-    (local $data handle)
+    (local $data rw_handle)
     (local.set $tmp (mem.alloc (i32.const 10) (i32.const 0)))
     (if (i32.eqz (local.get $n))
       (then
@@ -83,7 +83,7 @@
             (local.set $k (i32.add (local.get $k) (i32.const 1)))
             (br $lp)))))
     (local.set $len (mem.read_i32 (local.get $self) (i32.const 0)))
-    (local.set $data (mem.read_ref (local.get $self) (i32.const 0)))
+    (local.set $data (mem.read_ref_rw (local.get $self) (i32.const 0)))
     (local.set $i (i32.const 0))
     (block $b2
       (loop $l2
@@ -95,10 +95,9 @@
     (mem.write_i32 (local.get $self) (i32.const 0) (i32.add (local.get $len) (local.get $k))))
 
   (func $ByteBuf__as_str (param $self ro_handle) (result ro_handle)
-    (mem.readonly
-      (mem.span (mem.read_ref (local.get $self) (i32.const 0))
-                (i32.const 0)
-                (mem.read_i32 (local.get $self) (i32.const 0)))))
+    (mem.span (mem.read_ref_ro (local.get $self) (i32.const 0))
+              (i32.const 0)
+              (mem.read_i32 (local.get $self) (i32.const 0))))
 
   ;; UTF-8 codepoint counter
   (func $utf8_count_codepoints (param $s ro_handle) (result i32)

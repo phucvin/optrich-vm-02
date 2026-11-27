@@ -1,13 +1,13 @@
 ;; Guessed WAT for examples/optic/08b_cross_module_dyn_trait/widgets.opc
 (module
-  (global $Button_vt (mut handle) (handle.null))
-  (global $Slider_vt (mut handle) (handle.null))
+  (global $Button_vt (mut ro_handle) (handle.null))
+  (global $Slider_vt (mut ro_handle) (handle.null))
 
-  (func $Button__width (param $self handle) (result i32)
+  (func $Button__width (param $self ro_handle) (result i32)
     (i32.add (mem.read_i32 (local.get $self) (i32.const 0))
              (i32.mul (mem.read_i32 (local.get $self) (i32.const 4)) (i32.const 2))))
 
-  (func $Slider__width (param $self handle) (result i32)
+  (func $Slider__width (param $self ro_handle) (result i32)
     (i32.sub (mem.read_i32 (local.get $self) (i32.const 4))
              (mem.read_i32 (local.get $self) (i32.const 0))))
 

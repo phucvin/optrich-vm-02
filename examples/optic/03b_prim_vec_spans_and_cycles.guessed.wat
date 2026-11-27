@@ -4,7 +4,7 @@
 ;; CycleNode: mem.alloc(4, 1) -> bytes[0..4)=id, refs[0]=next
 (module
   (import "host" "trace_i32"  (func $trace_i32  (param ro_handle i32)))
-  (import "host" "trace_meta" (func $trace_meta (param ro_handle handle)))
+  (import "host" "trace_meta" (func $trace_meta (param ro_handle ro_handle)))
   (import "host" "trace_gc"   (func $trace_gc   (param ro_handle)))
 
   (string $l1 "step1.vec_len")
@@ -28,13 +28,13 @@
   (func $Vec_i32__push (param $v rw_handle) (param $val i32)
     (local $len i32)
     (local $cap i32)
-    (local $buf handle)
+    (local $buf rw_handle)
     (local $new_cap i32)
     (local $new_buf rw_handle)
 
     (local.set $len (mem.read_i32 (local.get $v) (i32.const 0)))
     (local.set $cap (mem.read_i32 (local.get $v) (i32.const 4)))
-    (local.set $buf (mem.read_ref (local.get $v) (i32.const 0)))
+    (local.set $buf (mem.read_ref_rw (local.get $v) (i32.const 0)))
 
     (if (i32.ge_s (local.get $len) (local.get $cap))
       (then
@@ -60,16 +60,16 @@
       (then (unreachable)))
     (local.set $len (i32.sub (local.get $len) (i32.const 1)))
     (mem.write_i32 (local.get $v) (i32.const 0) (local.get $len))
-    (mem.read_i32 (mem.read_ref (local.get $v) (i32.const 0))
+    (mem.read_i32 (mem.read_ref_ro (local.get $v) (i32.const 0))
                   (i32.shl (local.get $len) (i32.const 2))))
 
-  (func $Vec_i32__len (param $v handle) (result i32)
+  (func $Vec_i32__len (param $v ro_handle) (result i32)
     (mem.read_i32 (local.get $v) (i32.const 0)))
 
-  (func $Vec_i32__get (param $v handle) (param $idx i32) (result i32)
+  (func $Vec_i32__get (param $v ro_handle) (param $idx i32) (result i32)
     (if (i32.ge_u (local.get $idx) (mem.read_i32 (local.get $v) (i32.const 0)))
       (then (unreachable)))
-    (mem.read_i32 (mem.read_ref (local.get $v) (i32.const 0))
+    (mem.read_i32 (mem.read_ref_ro (local.get $v) (i32.const 0))
                   (i32.shl (local.get $idx) (i32.const 2))))
 
   ;; --- User functions ---
@@ -88,8 +88,8 @@
     (local $i i32)
     (local $popped i32)
     (local $buf rw_handle)
-    (local $s1 handle)
-    (local $s2 handle)
+    (local $s1 rw_handle)
+    (local $s2 rw_handle)
 
     (local.set $nums (call $Vec_i32__new (i32.const 2)))
     (local.set $i (i32.const 1))

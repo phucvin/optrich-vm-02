@@ -23,9 +23,14 @@ TEST(direct_cross_module_zero_copy_readonly_sharing) {
             (br $lp)))
         (local.get $cnt))
 
-      ;; Malicious consumer attempting to mutate a dynamic handle
-      (func (export "try_mutate") (param $h handle)
-        (mem.write_u8 (local.get $h) (i32.const 0) (i32.const 88)))
+      ;; Malicious consumer attempting to launder an ro_handle through a ref slot
+      (func (export "try_mutate") (param $h ro_handle)
+        (local $box rw_handle)
+        (local $rw rw_handle)
+        (local.set $box (mem.alloc (i32.const 0) (i32.const 1)))
+        (mem.write_ref (local.get $box) (i32.const 0) (local.get $h))
+        (local.set $rw (mem.read_ref_rw (local.get $box) (i32.const 0)))
+        (mem.write_u8 (local.get $rw) (i32.const 0) (i32.const 88)))
     )
     )");
 
@@ -33,7 +38,7 @@ TEST(direct_cross_module_zero_copy_readonly_sharing) {
     rt.instantiate_wat("app", R"(
     (module
       (import "strlib" "count_char" (func $count_char (param ro_handle i32) (result i32)))
-      (import "strlib" "try_mutate" (func $try_mutate (param handle)))
+      (import "strlib" "try_mutate" (func $try_mutate (param ro_handle)))
       (string $msg "banana_bandana")
 
       (func (export "run_slice_count") (result i32)
@@ -63,10 +68,10 @@ TEST(cross_module_tables_and_polymorphic_interface_handles) {
     // 1. `iface` owns the shared dispatch table and provides polymorphic `invoke_eval`
     rt.instantiate_wat("iface", R"(
     (module
-      (type $eval_sig (func (param handle i32) (result i32)))
+      (type $eval_sig (func (param ro_handle i32) (result i32)))
       (table $vtable (export "vtable") 8 funcref)
 
-      (func (export "eval") (param $obj handle) (param $x i32) (result i32)
+      (func (export "eval") (param $obj ro_handle) (param $x i32) (result i32)
         (local $slot i32)
         (local.set $slot (mem.read_i32 (local.get $obj) (i32.const 0)))
         (call_indirect (type $eval_sig) (local.get $obj) (local.get $x) (local.get $slot)))
@@ -79,7 +84,7 @@ TEST(cross_module_tables_and_polymorphic_interface_handles) {
       (import "iface" "vtable" (table $vtable 8 funcref))
       (global $bias i32 (i32.const 100))
 
-      (func $add_eval (param $self handle) (param $x i32) (result i32)
+      (func $add_eval (param $self ro_handle) (param $x i32) (result i32)
         ;; Uses `adder`'s own global `$bias` to prove target ModuleInstance switched!
         (i32.add
           (global.get $bias)
@@ -87,7 +92,7 @@ TEST(cross_module_tables_and_polymorphic_interface_handles) {
 
       (elem (i32.const 0) $add_eval)
 
-      (func (export "new_adder") (param $k i32) (result handle)
+      (func (export "new_adder") (param $k i32) (result ro_handle)
         (local $o rw_handle)
         (local.set $o (mem.alloc (i32.const 8) (i32.const 0)))
         (mem.write_i32 (local.get $o) (i32.const 0) (i32.const 0)) ;; vtable slot 0
@@ -101,12 +106,12 @@ TEST(cross_module_tables_and_polymorphic_interface_handles) {
     (module
       (import "iface" "vtable" (table $vtable 8 funcref))
 
-      (func $mul_eval (param $self handle) (param $x i32) (result i32)
+      (func $mul_eval (param $self ro_handle) (param $x i32) (result i32)
         (i32.mul (mem.read_i32 (local.get $self) (i32.const 4)) (local.get $x)))
 
       (elem (i32.const 1) $mul_eval)
 
-      (func (export "new_mul") (param $factor i32) (result handle)
+      (func (export "new_mul") (param $factor i32) (result ro_handle)
         (local $o rw_handle)
         (local.set $o (mem.alloc (i32.const 8) (i32.const 0)))
         (mem.write_i32 (local.get $o) (i32.const 0) (i32.const 1)) ;; vtable slot 1
@@ -118,13 +123,13 @@ TEST(cross_module_tables_and_polymorphic_interface_handles) {
     // 4. `main` creates both objects and dispatches polymorphically through `iface.eval`
     rt.instantiate_wat("main", R"(
     (module
-      (import "iface" "eval" (func $eval (param handle i32) (result i32)))
-      (import "adder" "new_adder" (func $new_adder (param i32) (result handle)))
-      (import "multiplier" "new_mul" (func $new_mul (param i32) (result handle)))
+      (import "iface" "eval" (func $eval (param ro_handle i32) (result i32)))
+      (import "adder" "new_adder" (func $new_adder (param i32) (result ro_handle)))
+      (import "multiplier" "new_mul" (func $new_mul (param i32) (result ro_handle)))
 
       (func (export "run") (result i32)
-        (local $a handle)
-        (local $m handle)
+        (local $a ro_handle)
+        (local $m ro_handle)
         (local.set $a (call $new_adder (i32.const 5)))
         (local.set $m (call $new_mul (i32.const 4)))
         ;; adder(5, 7) = 100 + 5 + 7 = 112; mul(4, 7) = 28 => 140
@@ -172,11 +177,11 @@ TEST(go_rust_style_trait_objects_with_vtable_and_call_ref) {
     // `rect` has ZERO imports and ZERO tables — builds a read-only vtable [area, perim]
     rt.instantiate_wat("rect", R"(
     (module
-      (global $vt (mut handle) (handle.null))
-      (func $area (param $s handle) (result i32)
+      (global $vt (mut ro_handle) (handle.null))
+      (func $area (param $s ro_handle) (result i32)
         (i32.mul (mem.read_i32 (local.get $s) (i32.const 0))
                  (mem.read_i32 (local.get $s) (i32.const 4))))
-      (func $perim (param $s handle) (result i32)
+      (func $perim (param $s ro_handle) (result i32)
         (i32.mul (i32.const 2)
                  (i32.add (mem.read_i32 (local.get $s) (i32.const 0))
                           (mem.read_i32 (local.get $s) (i32.const 4)))))
@@ -203,16 +208,16 @@ TEST(go_rust_style_trait_objects_with_vtable_and_call_ref) {
     // `driver` calls both methods via `call_ref` and verifies read-only vtable protection
     rt.instantiate_wat("driver", R"(
     (module
-      (type $m (func (param handle) (result i32)))
+      (type $m (func (param ro_handle) (result i32)))
       (import "rect" "new_rect" (func $new_rect (param i32 i32) (result ro_handle)))
 
       (func (export "run") (result i32)
         (local $t ro_handle)
-        (local $d handle)
-        (local $vt handle)
+        (local $d ro_handle)
+        (local $vt ro_handle)
         (local.set $t (call $new_rect (i32.const 3) (i32.const 4)))
-        (local.set $d (mem.read_ref (local.get $t) (i32.const 0)))
-        (local.set $vt (mem.read_ref (local.get $t) (i32.const 1)))
+        (local.set $d (mem.read_ref_ro (local.get $t) (i32.const 0)))
+        (local.set $vt (mem.read_ref_ro (local.get $t) (i32.const 1)))
         ;; area(3,4)=12 + perim(3,4)=14 + func_len(vt)=2 => 28
         (i32.add
           (i32.add
@@ -223,9 +228,9 @@ TEST(go_rust_style_trait_objects_with_vtable_and_call_ref) {
       ;; Attempting to tamper with frozen vtable traps at runtime!
       (func (export "tamper")
         (local $t ro_handle)
-        (local $vt handle)
+        (local $vt rw_handle)
         (local.set $t (call $new_rect (i32.const 1) (i32.const 1)))
-        (local.set $vt (mem.read_ref (local.get $t) (i32.const 1)))
+        (local.set $vt (mem.read_ref_rw (local.get $t) (i32.const 1)))
         (mem.write_func (local.get $vt) (i32.const 0) (ref.null func)))
     )
     )");

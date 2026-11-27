@@ -35,7 +35,7 @@
           (i32.and (i32.ge_s (local.get $y) (i32.const 0)) (i32.lt_s (local.get $y) (local.get $h))))
       (then
         (mem.write_u8
-          (mem.read_ref (local.get $self) (i32.const 0))
+          (mem.read_ref_rw (local.get $self) (i32.const 0))
           (i32.add (i32.mul (local.get $y) (local.get $w)) (local.get $x))
           (local.get $ch)))))
 
@@ -78,7 +78,7 @@
         (i32.and (i32.ge_s (local.get $y) (i32.const 0)) (i32.lt_s (local.get $y) (local.get $h))))
       (then
         (mem.read_u8
-          (mem.read_ref (local.get $self) (i32.const 0))
+          (mem.read_ref_ro (local.get $self) (i32.const 0))
           (i32.add (i32.mul (local.get $y) (local.get $w)) (local.get $x))))
       (else
         (i32.const 0))))
@@ -86,11 +86,10 @@
   (func $Canvas__row (export "Canvas__row") (param $self ro_handle) (param $y i32) (result ro_handle)
     (local $w i32)
     (local.set $w (mem.read_i32 (local.get $self) (i32.const 0)))
-    (mem.readonly
-      (mem.span
-        (mem.read_ref (local.get $self) (i32.const 0))
-        (i32.mul (local.get $y) (local.get $w))
-        (local.get $w))))
+    (mem.span
+      (mem.read_ref_ro (local.get $self) (i32.const 0))
+      (i32.mul (local.get $y) (local.get $w))
+      (local.get $w)))
 
   (func (export "get_created_count") (result i32)
     (global.get $CREATED_COUNT))

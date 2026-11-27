@@ -139,7 +139,7 @@ TEST(typed_local_zero_initialization_and_globals) {
         (local $a i32)
         (local $b i64)
         (local $c f64)
-        (local $h handle)
+        (local $h ro_handle)
         (if (i32.ne (local.get $a) (i32.const 0)) (then (return (i32.const 0))))
         (if (i64.ne (local.get $b) (i64.const 0)) (then (return (i32.const 0))))
         (if (f64.ne (local.get $c) (f64.const 0.0)) (then (return (i32.const 0))))

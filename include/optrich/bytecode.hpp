@@ -83,10 +83,12 @@ enum class OpCode : uint16_t {
     MemWriteF64,
 
     // Reference-slot & Vtable-slot ops
-    MemReadRef,    // (h: handle, slot_idx: i32) -> handle
-    MemWriteRef,   // (h: handle, slot_idx: i32, child: handle) -> ()
-    MemReadFunc,   // (h: handle, slot_idx: i32) -> funcref
-    MemWriteFunc,  // (h: handle, slot_idx: i32, fn: funcref) -> ()
+    MemReadRefRw,  // (h: ro_handle, slot_idx: i32) -> rw_handle (traps if stored handle is ro)
+    MemReadRefRo,  // (h: ro_handle, slot_idx: i32) -> ro_handle
+    MemWriteRef,   // (h: rw_handle, slot_idx: i32, child: rw_handle) -> ()
+    MemWriteRefRo, // (h: rw_handle, slot_idx: i32, child: ro_handle) -> () (enforces readonly)
+    MemReadFunc,   // (h: ro_handle, slot_idx: i32) -> funcref
+    MemWriteFunc,  // (h: rw_handle, slot_idx: i32, fn: funcref) -> ()
 
     // Bulk memory ops
     MemCopy,       // (dst, dst_off, src, src_off, len) -> ()

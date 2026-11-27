@@ -46,7 +46,7 @@
       (else (local.get $def))))
 
   ;; --- str impl Hash & Eq ---
-  (func $str__hash (param $s handle) (result i32)
+  (func $str__hash (param $s ro_handle) (result i32)
     (local $h i32)
     (local $i i32)
     (local $end i32)
@@ -61,7 +61,7 @@
         (br $cont)))
     (local.get $h))
 
-  (func $str__eq (param $a handle) (param $b handle) (result i32)
+  (func $str__eq (param $a ro_handle) (param $b ro_handle) (result i32)
     (local $la i32)
     (local.set $la (mem.byte_len (local.get $a)))
     (if (i32.ne (local.get $la) (mem.byte_len (local.get $b)))
@@ -83,8 +83,8 @@
     (local.get $m))
 
   (func $HashMap_str_i32__insert_raw
-    (param $states handle) (param $keys handle) (param $vals handle) (param $cap i32)
-    (param $k handle) (param $v i32) (result i32)
+    (param $states rw_handle) (param $keys rw_handle) (param $vals rw_handle) (param $cap i32)
+    (param $k ro_handle) (param $v i32) (result i32)
     (local $mask i32)
     (local $idx i32)
     (local $st i32)
@@ -109,7 +109,7 @@
             (return (i32.const 1)))) ;; inserted into empty slot
         (if (i32.eq (local.get $st) (i32.const 1))
           (then
-            (if (call $str__eq (mem.read_ref (local.get $keys) (local.get $idx)) (local.get $k))
+            (if (call $str__eq (mem.read_ref_ro (local.get $keys) (local.get $idx)) (local.get $k))
               (then
                 (mem.write_i32 (local.get $vals) (i32.shl (local.get $idx) (i32.const 2)) (local.get $v))
                 (return (i32.const 0)))))) ;; updated existing
@@ -125,9 +125,9 @@
     (local $len i32)
     (local $old_cap i32)
     (local $new_cap i32)
-    (local $old_st handle)
-    (local $old_k handle)
-    (local $old_v handle)
+    (local $old_st ro_handle)
+    (local $old_k ro_handle)
+    (local $old_v ro_handle)
     (local $new_st rw_handle)
     (local $new_k rw_handle)
     (local $new_v rw_handle)
@@ -139,9 +139,9 @@
       (if (result i32) (i32.ge_s (i32.shl (local.get $len) (i32.const 1)) (local.get $old_cap))
         (then (i32.shl (local.get $old_cap) (i32.const 1)))
         (else (local.get $old_cap))))
-    (local.set $old_st (mem.read_ref (local.get $m) (i32.const 0)))
-    (local.set $old_k  (mem.read_ref (local.get $m) (i32.const 1)))
-    (local.set $old_v  (mem.read_ref (local.get $m) (i32.const 2)))
+    (local.set $old_st (mem.read_ref_ro (local.get $m) (i32.const 0)))
+    (local.set $old_k  (mem.read_ref_ro (local.get $m) (i32.const 1)))
+    (local.set $old_v  (mem.read_ref_ro (local.get $m) (i32.const 2)))
 
     (local.set $new_st (mem.alloc (local.get $new_cap) (i32.const 0)))
     (local.set $new_k  (mem.alloc (i32.const 0) (local.get $new_cap)))
@@ -154,7 +154,7 @@
           (then
             (drop (call $HashMap_str_i32__insert_raw
                     (local.get $new_st) (local.get $new_k) (local.get $new_v) (local.get $new_cap)
-                    (mem.read_ref (local.get $old_k) (local.get $i))
+                    (mem.read_ref_ro (local.get $old_k) (local.get $i))
                     (mem.read_i32 (local.get $old_v) (i32.shl (local.get $i) (i32.const 2)))))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $cont)))
@@ -165,7 +165,7 @@
     (mem.write_ref (local.get $m) (i32.const 1) (local.get $new_k))
     (mem.write_ref (local.get $m) (i32.const 2) (local.get $new_v)))
 
-  (func $HashMap_str_i32__insert (param $m rw_handle) (param $k handle) (param $v i32)
+  (func $HashMap_str_i32__insert (param $m rw_handle) (param $k ro_handle) (param $v i32)
     (local $used i32)
     (local $cap i32)
     (local $status i32)
@@ -178,9 +178,9 @@
         (local.set $cap (mem.read_i32 (local.get $m) (i32.const 8)))))
     (local.set $status
       (call $HashMap_str_i32__insert_raw
-        (mem.read_ref (local.get $m) (i32.const 0))
-        (mem.read_ref (local.get $m) (i32.const 1))
-        (mem.read_ref (local.get $m) (i32.const 2))
+        (mem.read_ref_rw (local.get $m) (i32.const 0))
+        (mem.read_ref_rw (local.get $m) (i32.const 1))
+        (mem.read_ref_rw (local.get $m) (i32.const 2))
         (local.get $cap) (local.get $k) (local.get $v)))
     (if (i32.eq (local.get $status) (i32.const 1))
       (then
@@ -195,19 +195,19 @@
               (i32.add (mem.read_i32 (local.get $m) (i32.const 0)) (i32.const 1))))))))
 
   ;; Returns unboxed Option<i32> = (is_some: i32, val: i32)
-  (func $HashMap_str_i32__get (param $m handle) (param $k handle) (result i32 i32)
+  (func $HashMap_str_i32__get (param $m ro_handle) (param $k ro_handle) (result i32 i32)
     (local $cap i32)
     (local $mask i32)
     (local $idx i32)
     (local $st i32)
-    (local $states handle)
-    (local $keys handle)
-    (local $vals handle)
+    (local $states ro_handle)
+    (local $keys ro_handle)
+    (local $vals ro_handle)
     (local.set $cap (mem.read_i32 (local.get $m) (i32.const 8)))
     (local.set $mask (i32.sub (local.get $cap) (i32.const 1)))
-    (local.set $states (mem.read_ref (local.get $m) (i32.const 0)))
-    (local.set $keys   (mem.read_ref (local.get $m) (i32.const 1)))
-    (local.set $vals   (mem.read_ref (local.get $m) (i32.const 2)))
+    (local.set $states (mem.read_ref_ro (local.get $m) (i32.const 0)))
+    (local.set $keys   (mem.read_ref_ro (local.get $m) (i32.const 1)))
+    (local.set $vals   (mem.read_ref_ro (local.get $m) (i32.const 2)))
     (local.set $idx (i32.and (call $str__hash (local.get $k)) (local.get $mask)))
     (block $done
       (loop $probe
@@ -216,7 +216,7 @@
           (then (return (i32.const 0) (i32.const 0))))
         (if (i32.eq (local.get $st) (i32.const 1))
           (then
-            (if (call $str__eq (mem.read_ref (local.get $keys) (local.get $idx)) (local.get $k))
+            (if (call $str__eq (mem.read_ref_ro (local.get $keys) (local.get $idx)) (local.get $k))
               (then
                 (return (i32.const 1)
                         (mem.read_i32 (local.get $vals) (i32.shl (local.get $idx) (i32.const 2))))))))
@@ -224,17 +224,17 @@
         (br $probe)))
     (i32.const 0) (i32.const 0))
 
-  (func $HashMap_str_i32__remove (param $m rw_handle) (param $k handle) (result i32)
+  (func $HashMap_str_i32__remove (param $m rw_handle) (param $k ro_handle) (result i32)
     (local $cap i32)
     (local $mask i32)
     (local $idx i32)
     (local $st i32)
-    (local $states handle)
-    (local $keys handle)
+    (local $states rw_handle)
+    (local $keys rw_handle)
     (local.set $cap (mem.read_i32 (local.get $m) (i32.const 8)))
     (local.set $mask (i32.sub (local.get $cap) (i32.const 1)))
-    (local.set $states (mem.read_ref (local.get $m) (i32.const 0)))
-    (local.set $keys   (mem.read_ref (local.get $m) (i32.const 1)))
+    (local.set $states (mem.read_ref_rw (local.get $m) (i32.const 0)))
+    (local.set $keys   (mem.read_ref_rw (local.get $m) (i32.const 1)))
     (local.set $idx (i32.and (call $str__hash (local.get $k)) (local.get $mask)))
     (block $done
       (loop $probe
@@ -243,7 +243,7 @@
           (then (return (i32.const 0))))
         (if (i32.eq (local.get $st) (i32.const 1))
           (then
-            (if (call $str__eq (mem.read_ref (local.get $keys) (local.get $idx)) (local.get $k))
+            (if (call $str__eq (mem.read_ref_ro (local.get $keys) (local.get $idx)) (local.get $k))
               (then
                 (mem.write_u8  (local.get $states) (local.get $idx) (i32.const 2))
                 (mem.write_ref (local.get $keys)   (local.get $idx) (handle.null))
@@ -269,8 +269,8 @@
     (local.get $m))
 
   (func $HashMap_str_u8__insert_raw
-    (param $states handle) (param $keys handle) (param $vals handle) (param $cap i32)
-    (param $k handle) (param $v i32) (result i32)
+    (param $states rw_handle) (param $keys rw_handle) (param $vals rw_handle) (param $cap i32)
+    (param $k ro_handle) (param $v i32) (result i32)
     (local $mask i32)
     (local $idx i32)
     (local $st i32)
@@ -295,7 +295,7 @@
             (return (i32.const 1))))
         (if (i32.eq (local.get $st) (i32.const 1))
           (then
-            (if (call $str__eq (mem.read_ref (local.get $keys) (local.get $idx)) (local.get $k))
+            (if (call $str__eq (mem.read_ref_ro (local.get $keys) (local.get $idx)) (local.get $k))
               (then
                 (mem.write_u8 (local.get $vals) (local.get $idx) (local.get $v))
                 (return (i32.const 0))))))
@@ -307,13 +307,13 @@
         (br $probe)))
     (i32.const 0))
 
-  (func $HashMap_str_u8__rehash (param $m handle)
+  (func $HashMap_str_u8__rehash (param $m rw_handle)
     (local $len i32)
     (local $old_cap i32)
     (local $new_cap i32)
-    (local $old_st handle)
-    (local $old_k handle)
-    (local $old_v handle)
+    (local $old_st ro_handle)
+    (local $old_k ro_handle)
+    (local $old_v ro_handle)
     (local $new_st rw_handle)
     (local $new_k rw_handle)
     (local $new_v rw_handle)
@@ -325,9 +325,9 @@
       (if (result i32) (i32.ge_s (i32.shl (local.get $len) (i32.const 1)) (local.get $old_cap))
         (then (i32.shl (local.get $old_cap) (i32.const 1)))
         (else (local.get $old_cap))))
-    (local.set $old_st (mem.read_ref (local.get $m) (i32.const 0)))
-    (local.set $old_k  (mem.read_ref (local.get $m) (i32.const 1)))
-    (local.set $old_v  (mem.read_ref (local.get $m) (i32.const 2)))
+    (local.set $old_st (mem.read_ref_ro (local.get $m) (i32.const 0)))
+    (local.set $old_k  (mem.read_ref_ro (local.get $m) (i32.const 1)))
+    (local.set $old_v  (mem.read_ref_ro (local.get $m) (i32.const 2)))
 
     (local.set $new_st (mem.alloc (local.get $new_cap) (i32.const 0)))
     (local.set $new_k  (mem.alloc (i32.const 0) (local.get $new_cap)))
@@ -340,7 +340,7 @@
           (then
             (drop (call $HashMap_str_u8__insert_raw
                     (local.get $new_st) (local.get $new_k) (local.get $new_v) (local.get $new_cap)
-                    (mem.read_ref (local.get $old_k) (local.get $i))
+                    (mem.read_ref_ro (local.get $old_k) (local.get $i))
                     (mem.read_u8  (local.get $old_v) (local.get $i))))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $cont)))
@@ -351,7 +351,7 @@
     (mem.write_ref (local.get $m) (i32.const 1) (local.get $new_k))
     (mem.write_ref (local.get $m) (i32.const 2) (local.get $new_v)))
 
-  (func $HashMap_str_u8__insert (param $m handle) (param $k handle) (param $v i32)
+  (func $HashMap_str_u8__insert (param $m rw_handle) (param $k ro_handle) (param $v i32)
     (local $used i32)
     (local $cap i32)
     (local $status i32)
@@ -364,9 +364,9 @@
         (local.set $cap (mem.read_i32 (local.get $m) (i32.const 8)))))
     (local.set $status
       (call $HashMap_str_u8__insert_raw
-        (mem.read_ref (local.get $m) (i32.const 0))
-        (mem.read_ref (local.get $m) (i32.const 1))
-        (mem.read_ref (local.get $m) (i32.const 2))
+        (mem.read_ref_rw (local.get $m) (i32.const 0))
+        (mem.read_ref_rw (local.get $m) (i32.const 1))
+        (mem.read_ref_rw (local.get $m) (i32.const 2))
         (local.get $cap) (local.get $k) (local.get $v)))
     (if (i32.eq (local.get $status) (i32.const 1))
       (then
@@ -380,19 +380,19 @@
             (mem.write_i32 (local.get $m) (i32.const 0)
               (i32.add (mem.read_i32 (local.get $m) (i32.const 0)) (i32.const 1))))))))
 
-  (func $HashMap_str_u8__get (param $m handle) (param $k handle) (result i32 i32)
+  (func $HashMap_str_u8__get (param $m ro_handle) (param $k ro_handle) (result i32 i32)
     (local $cap i32)
     (local $mask i32)
     (local $idx i32)
     (local $st i32)
-    (local $states handle)
-    (local $keys handle)
-    (local $vals handle)
+    (local $states ro_handle)
+    (local $keys ro_handle)
+    (local $vals ro_handle)
     (local.set $cap (mem.read_i32 (local.get $m) (i32.const 8)))
     (local.set $mask (i32.sub (local.get $cap) (i32.const 1)))
-    (local.set $states (mem.read_ref (local.get $m) (i32.const 0)))
-    (local.set $keys   (mem.read_ref (local.get $m) (i32.const 1)))
-    (local.set $vals   (mem.read_ref (local.get $m) (i32.const 2)))
+    (local.set $states (mem.read_ref_ro (local.get $m) (i32.const 0)))
+    (local.set $keys   (mem.read_ref_ro (local.get $m) (i32.const 1)))
+    (local.set $vals   (mem.read_ref_ro (local.get $m) (i32.const 2)))
     (local.set $idx (i32.and (call $str__hash (local.get $k)) (local.get $mask)))
     (block $done
       (loop $probe
@@ -401,7 +401,7 @@
           (then (return (i32.const 0) (i32.const 0))))
         (if (i32.eq (local.get $st) (i32.const 1))
           (then
-            (if (call $str__eq (mem.read_ref (local.get $keys) (local.get $idx)) (local.get $k))
+            (if (call $str__eq (mem.read_ref_ro (local.get $keys) (local.get $idx)) (local.get $k))
               (then
                 (return (i32.const 1) (mem.read_u8 (local.get $vals) (local.get $idx)))))))
         (local.set $idx (i32.and (i32.add (local.get $idx) (i32.const 1)) (local.get $mask)))
@@ -415,16 +415,16 @@
     (mem.write_ref (local.get $s) (i32.const 0) (call $HashMap_str_u8__new (local.get $min_cap)))
     (local.get $s))
 
-  (func $Set_str__add (param $s rw_handle) (param $item handle)
-    (call $HashMap_str_u8__insert (mem.read_ref (local.get $s) (i32.const 0)) (local.get $item) (i32.const 1)))
+  (func $Set_str__add (param $s rw_handle) (param $item ro_handle)
+    (call $HashMap_str_u8__insert (mem.read_ref_rw (local.get $s) (i32.const 0)) (local.get $item) (i32.const 1)))
 
-  (func $Set_str__len (param $s handle) (result i32)
-    (mem.read_i32 (mem.read_ref (local.get $s) (i32.const 0)) (i32.const 0)))
+  (func $Set_str__len (param $s ro_handle) (result i32)
+    (mem.read_i32 (mem.read_ref_ro (local.get $s) (i32.const 0)) (i32.const 0)))
 
-  (func $Set_str__contains (param $s handle) (param $item handle) (result i32)
+  (func $Set_str__contains (param $s ro_handle) (param $item ro_handle) (result i32)
     (local $ok i32)
     (local $v i32)
-    (call $HashMap_str_u8__get (mem.read_ref (local.get $s) (i32.const 0)) (local.get $item))
+    (call $HashMap_str_u8__get (mem.read_ref_ro (local.get $s) (i32.const 0)) (local.get $item))
     (local.set $v) (local.set $ok)
     (local.get $ok))
 

@@ -1,11 +1,11 @@
-// Runtime Trap Spec 10h — Dynamic handle holding a read-only block traps on write (defense-in-depth)
+// Runtime Trap Spec 10h — Attempting `mem.read_ref_rw` on a read-only handle stored in a ref slot traps at runtime
 
 import host::trace_meta;
 
 export fn main() -> i32 {
     let s: str = "frozen";
     trace_meta("step1.frozen_meta", s);
-    // Even if a dynamic `handle` bypasses static `ro_handle` checks, VM traps at runtime!
+    // Even if a read-only handle is stored in a ref slot, reading it back as `rw_handle` traps at runtime!
     unsafe_write_byte(s, 0, b'X');
     return 0;
 }

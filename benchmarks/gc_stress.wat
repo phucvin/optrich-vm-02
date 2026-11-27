@@ -24,9 +24,9 @@
   (func (export "alloc_ref_chain") (param $rounds i32) (param $len i32) (result i32)
     (local $r i32)
     (local $i i32)
-    (local $head handle)
+    (local $head rw_handle)
     (local $node rw_handle)
-    (local $cur handle)
+    (local $cur ro_handle)
     (local $acc i32)
 
     (block $r_done
@@ -50,7 +50,7 @@
           (loop $walk_lp
             (br_if $walk_done (mem.is_null (local.get $cur)))
             (local.set $acc (i32.add (local.get $acc) (mem.read_i32 (local.get $cur) (i32.const 0))))
-            (local.set $cur (mem.read_ref (local.get $cur) (i32.const 0)))
+            (local.set $cur (mem.read_ref_ro (local.get $cur) (i32.const 0)))
             (br $walk_lp)))
 
         (local.set $r (i32.add (local.get $r) (i32.const 1)))

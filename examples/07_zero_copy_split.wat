@@ -8,7 +8,7 @@
   (string $target "banana")
 
   ;; Split `s` by byte `delim` into a ref array of zero-copy `ro_handle` spans
-  (func $split (param $s ro_handle) (param $delim i32) (param $max_parts i32) (result handle)
+  (func $split (param $s ro_handle) (param $delim i32) (param $max_parts i32) (result rw_handle)
     (local $out rw_handle)
     (local $i i32)
     (local $start i32)
@@ -45,12 +45,12 @@
   ;; Entry point: split CSV -> 3 tokens; verify token[1] == "banana" (len 6)
   ;; Returns: token_count * 100 + len(token[1]) * 10 + equals_target => 361
   (func (export "main") (result i32)
-    (local $parts handle)
-    (local $tok1 handle)
+    (local $parts rw_handle)
+    (local $tok1 ro_handle)
     (local $eq i32)
 
     (local.set $parts (call $split (mem.const_str $csv) (i32.const 44) (i32.const 8))) ;; ',' = 44
-    (local.set $tok1 (mem.read_ref (local.get $parts) (i32.const 1)))
+    (local.set $tok1 (mem.read_ref_ro (local.get $parts) (i32.const 1)))
 
     (local.set $eq
       (i32.and

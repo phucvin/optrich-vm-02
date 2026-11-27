@@ -5,15 +5,15 @@
 ;;   read  : mem.alloc(0, 2) -> refs[0]=frozen vtable, refs[1]=cell_total (shared!)
 (module
   (import "host" "trace_i32"  (func $trace_i32  (param ro_handle i32)))
-  (import "host" "trace_meta" (func $trace_meta (param ro_handle handle)))
+  (import "host" "trace_meta" (func $trace_meta (param ro_handle ro_handle)))
 
   (type $fn_i32_i32      (func (param i32) (result i32)))
-  (type $cl_i32_i32      (func (param handle i32) (result i32)))
-  (type $cl_void_i32     (func (param handle) (result i32)))
+  (type $cl_i32_i32      (func (param ro_handle i32) (result i32)))
+  (type $cl_void_i32     (func (param ro_handle) (result i32)))
 
-  (global $adder_vt (mut handle) (handle.null))
-  (global $inc_vt   (mut handle) (handle.null))
-  (global $read_vt  (mut handle) (handle.null))
+  (global $adder_vt (mut ro_handle) (handle.null))
+  (global $inc_vt   (mut ro_handle) (handle.null))
+  (global $read_vt  (mut ro_handle) (handle.null))
 
   (string $l1 "step1.fn_double")
   (string $l2 "step2.fn_square")
@@ -34,7 +34,7 @@
     (call_ref (type $fn_i32_i32) (local.get $x) (local.get $f)))
 
   ;; 2. Capturing closure `make_adder`
-  (func $adder_body (param $env handle) (param $x i32) (result i32)
+  (func $adder_body (param $env ro_handle) (param $x i32) (result i32)
     (i32.add (mem.read_i32 (local.get $env) (i32.const 0)) (local.get $x)))
 
   (func $make_adder (param $k i32) (result ro_handle)
@@ -51,27 +51,27 @@
     (mem.readonly (local.get $cl)))
 
   ;; 3. Mutable capture closure bodies (cell at refs[1])
-  (func $inc_body (param $env handle) (param $delta i32) (result i32)
-    (local $cell handle)
+  (func $inc_body (param $env ro_handle) (param $delta i32) (result i32)
+    (local $cell rw_handle)
     (local $next i32)
-    (local.set $cell (mem.read_ref (local.get $env) (i32.const 1)))
+    (local.set $cell (mem.read_ref_rw (local.get $env) (i32.const 1)))
     (local.set $next (i32.add (mem.read_i32 (local.get $cell) (i32.const 0)) (local.get $delta)))
     (mem.write_i32 (local.get $cell) (i32.const 0) (local.get $next))
     (local.get $next))
 
-  (func $read_body (param $env handle) (result i32)
-    (mem.read_i32 (mem.read_ref (local.get $env) (i32.const 1)) (i32.const 0)))
+  (func $read_body (param $env ro_handle) (result i32)
+    (mem.read_i32 (mem.read_ref_ro (local.get $env) (i32.const 1)) (i32.const 0)))
 
-  (func $call_cl_i32 (param $cl handle) (param $x i32) (result i32)
+  (func $call_cl_i32 (param $cl ro_handle) (param $x i32) (result i32)
     (call_ref (type $cl_i32_i32)
       (local.get $cl)
       (local.get $x)
-      (mem.read_func (mem.read_ref (local.get $cl) (i32.const 0)) (i32.const 0))))
+      (mem.read_func (mem.read_ref_ro (local.get $cl) (i32.const 0)) (i32.const 0))))
 
-  (func $call_cl_void (param $cl handle) (result i32)
+  (func $call_cl_void (param $cl ro_handle) (result i32)
     (call_ref (type $cl_void_i32)
       (local.get $cl)
-      (mem.read_func (mem.read_ref (local.get $cl) (i32.const 0)) (i32.const 0))))
+      (mem.read_func (mem.read_ref_ro (local.get $cl) (i32.const 0)) (i32.const 0))))
 
   (func (export "main") (result i32)
     (local $a i32)

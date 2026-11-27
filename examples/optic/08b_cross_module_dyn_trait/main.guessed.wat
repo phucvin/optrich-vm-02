@@ -4,16 +4,16 @@
   (import "widgets" "make_button" (func $make_button (param i32 i32) (result ro_handle)))
   (import "widgets" "make_slider" (func $make_slider (param i32 i32) (result ro_handle)))
 
-  (type $sig_width (func (param handle) (result i32)))
+  (type $sig_width (func (param ro_handle) (result i32)))
 
   (string $l1 "step1.button1_width")
   (string $l2 "step2.slider_width")
   (string $l3 "step3.button2_width")
 
-  (func $dyn_Renderable__width (param $obj handle) (result i32)
+  (func $dyn_Renderable__width (param $obj ro_handle) (result i32)
     (call_ref (type $sig_width)
-      (mem.read_ref (local.get $obj) (i32.const 0))
-      (mem.read_func (mem.read_ref (local.get $obj) (i32.const 1)) (i32.const 0))))
+      (mem.read_ref_ro (local.get $obj) (i32.const 0))
+      (mem.read_func (mem.read_ref_ro (local.get $obj) (i32.const 1)) (i32.const 0))))
 
   (func (export "main") (result i32)
     (local $w1 ro_handle)

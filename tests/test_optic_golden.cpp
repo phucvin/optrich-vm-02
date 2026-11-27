@@ -47,7 +47,6 @@ std::string format_results(const FuncSignature& sig, const std::vector<Value>& r
             case ValType::I64: out << results[i].i64 << "\n"; break;
             case ValType::F32: out << results[i].f32 << "\n"; break;
             case ValType::F64: out << format_f64_clean(results[i].f64) << "\n"; break;
-            case ValType::Handle:
             case ValType::RwHandle:
             case ValType::RoHandle:
                 if (results[i].handle.is_null()) {

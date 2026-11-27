@@ -105,7 +105,7 @@ TEST(auto_gc_during_vm_execution_preserves_stack_roots) {
     (module
       (func (export "churn") (param $iters i32) (result i32)
         (local $keep rw_handle)
-        (local $tmp handle)
+        (local $tmp rw_handle)
         (local $i i32)
         (local.set $keep (mem.alloc (i32.const 4) (i32.const 0)))
         (mem.write_i32 (local.get $keep) (i32.const 0) (i32.const 777))
@@ -138,8 +138,8 @@ TEST(cross_module_gc_roots_across_shared_store) {
     // Module A allocates a buffer and hands a read-only view to Module B
     rt.instantiate_wat("holder", R"(
     (module
-      (global $saved (mut handle) (handle.null))
-      (func (export "store_it") (param $h handle)
+      (global $saved (mut ro_handle) (handle.null))
+      (func (export "store_it") (param $h ro_handle)
         (global.set $saved (local.get $h)))
       (func (export "clear_it")
         (global.set $saved (handle.null)))
@@ -150,7 +150,7 @@ TEST(cross_module_gc_roots_across_shared_store) {
 
     rt.instantiate_wat("producer", R"(
     (module
-      (import "holder" "store_it" (func $store_it (param handle)))
+      (import "holder" "store_it" (func $store_it (param ro_handle)))
       (func (export "make_and_share")
         (local $buf rw_handle)
         (local.set $buf (mem.alloc (i32.const 8) (i32.const 0)))
