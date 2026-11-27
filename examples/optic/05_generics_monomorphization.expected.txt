@@ -1,0 +1,10 @@
+step1.box_i32_meta: ro=false bytes=4 refs=0
+step2.box_str_meta: ro=false bytes=0 refs=1
+step3.box_i32_val: 42
+step4.box_str_val: "optic"
+step5.pair_i32_str_meta: ro=false bytes=4 refs=1
+step6.pair_f64_i32_meta: ro=false bytes=12 refs=0
+step7.pair_f64_first: 2.5
+step8.tasks_score: 55
+step9.bonuses_score: 125
+return: 229

@@ -1,0 +1,93 @@
+// Example 05 — Generics & Monomorphization (Split-Block Partitioning + Static Trait Bounds)
+
+import host::trace_i32;
+import host::trace_f64;
+import host::trace_str;
+import host::trace_meta;
+
+struct Box<T> {
+    val: T,
+}
+
+impl<T> Box<T> {
+    fn new(v: T) -> Box<T> {
+        return Box<T> { val: v };
+    }
+}
+
+struct Pair<A, B> {
+    first: A,
+    second: B,
+}
+
+impl<A, B> Pair<A, B> {
+    fn new(a: A, b: B) -> Pair<A, B> {
+        return Pair<A, B> { first: a, second: b };
+    }
+}
+
+trait Scorable {
+    fn score(self: ro Self) -> i32;
+}
+
+struct Task {
+    points: i32,
+    multiplier: i32,
+}
+
+impl Scorable for Task {
+    fn score(self: ro Task) -> i32 {
+        return self.points * self.multiplier;
+    }
+}
+
+struct Bonus {
+    flat: i32,
+}
+
+impl Scorable for Bonus {
+    fn score(self: ro Bonus) -> i32 {
+        return self.flat;
+    }
+}
+
+// Generic function with static trait bound -> monomorphized per T (zero vtable!)
+fn total_score<T: Scorable>(items: ro []T) -> i32 {
+    let mut sum = 0;
+    for i in 0..items.len {
+        sum += items[i].score();
+    }
+    return sum;
+}
+
+export fn main() -> i32 {
+    // 1. Box<i32> -> bytes=4, refs=0; Box<str> -> bytes=0, refs=1
+    let bi = Box<i32>::new(42);
+    let bs = Box<str>::new("optic");
+    trace_meta("step1.box_i32_meta", bi);
+    trace_meta("step2.box_str_meta", bs);
+    trace_i32("step3.box_i32_val", bi.val);
+    trace_str("step4.box_str_val", bs.val);
+
+    // 2. Pair<i32, str> -> bytes=4, refs=1; Pair<f64, i32> -> bytes=12, refs=0
+    let p1 = Pair<i32, str>::new(7, "lucky");
+    let p2 = Pair<f64, i32>::new(2.5, 4);
+    trace_meta("step5.pair_i32_str_meta", p1);
+    trace_meta("step6.pair_f64_i32_meta", p2);
+    trace_f64("step7.pair_f64_first", p2.first);
+
+    // 3. Monomorphized trait-bounded function (static dispatch)
+    let tasks = new [Task; 2];
+    tasks[0] = Task { points: 5, multiplier: 3 };
+    tasks[1] = Task { points: 4, multiplier: 10 };
+    let ts = total_score<Task>(readonly(tasks));
+    trace_i32("step8.tasks_score", ts);
+
+    let bonuses = new [Bonus; 2];
+    bonuses[0] = Bonus { flat: 100 };
+    bonuses[1] = Bonus { flat: 25 };
+    let bs_total = total_score<Bonus>(readonly(bonuses));
+    trace_i32("step9.bonuses_score", bs_total);
+
+    return bi.val + p1.first + ts + bs_total;
+}

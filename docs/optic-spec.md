@@ -267,7 +267,20 @@ An `enum` with variants is lowered to a single split block:
 
 ---
 
-## 8. Open Design Questions (To Resolve Across Iterations)
+## 8. Generics & Monomorphization
+
+Generic structs (`struct Box<T>`, `struct Pair<A, B>`) and generic functions (`fn f<T: Trait>(...)`) are **monomorphized at compile time** per concrete type instantiation (like Rust):
+* **Split-block field partitioning per instantiation:**
+  * `Box<i32>` → `mem.alloc(4, 0)` (`bytes[0..4)`)
+  * `Box<str>` → `mem.alloc(0, 1)` (`refs[0]`)
+  * `Pair<i32, str>` → `mem.alloc(4, 1)` (`bytes[0..4)` + `refs[0]`)
+  * `Pair<f64, i32>` → `mem.alloc(12, 0)` (`bytes[0..8)` + `bytes[8..12)`)
+* **Static trait-bound dispatch:** Generic functions with trait bounds (`fn total_score<T: Scorable>(items: ro []T) -> i32`) monomorphize into direct `call $ConcreteType__method` instructions with zero vtables and zero boxing.
+* **Mangling convention:** `$Struct_Arg1_Arg2__method` and `$func__Arg1`.
+
+---
+
+## 9. Open Design Questions (To Resolve Across Iterations)
 
 1. **Implicit vs. explicit `readonly(...)`:** Should passing `[]u8` to a `ro []u8` parameter require explicit `readonly(buf)` or auto-insert `mem.readonly`? (Explicit makes the capability downgrade visible; implicit is more ergonomic.)
 2. **Shallow vs. transitive `ro T`:** If `e: ro Entry` has a mutable child field `child: Node`, should `e.child` be `ro Node` (transitive) or `Node` (shallow)?
