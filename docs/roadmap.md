@@ -52,20 +52,40 @@
 
 ---
 
-## Phase 5: Benchmarks & JIT Readiness
-*Validate performance and keep the architecture JIT-friendly.*
+## Phase 5: Benchmarks & Interpreter Optimization *(Complete)*
+*Validate performance and optimize the bytecode interpreter.*
 
-* **Benchmark suite:**
-  1. Interpreter throughput on arithmetic, array loops, and string processing.
-  2. Zero-copy cross-module buffer/span passing vs. copy-based passing.
-  3. GC pause/throughput on raw-data-heavy vs. reference-heavy object graphs.
-* **JIT-ready bytecode:** Ensure the resolved bytecode, static handle types, and structured control flow lower cleanly to a baseline JIT (e.g., Cranelift, asmjit, or LLVM ORC) with register-held `(ptr, size)` and hoisted bounds checks.
+* **Benchmark suite (`make bench`):**
+  1. Interpreter throughput on recursion (`fib(40)`), tight arithmetic loops (`sum_loop`, `sieve`), and fat-handle typed arrays (`array_sum`).
+  2. Zero-copy span passing (`mem.span` + `mem.readonly`) vs. copy-based (`mem.alloc` + `mem.copy`) passing (**10.0x faster** on 64 KB buffers).
+  3. Direct vs. `call_indirect` vs. `call_ref` vtable dispatch overhead.
+  4. GC allocation and marking throughput on raw-byte-heavy vs. reference-heavy object graphs.
+* **Interpreter optimizations** (see [docs/interpreter-optimizations.md](interpreter-optimizations.md)):
+  * Intra-module `CallLocal`, raw `CallFrame*` stack, cached `code_base` / `funcs_base`, 8-byte primitive slot copies, and branch-target-safe peephole superinstructions (`fib(40)` reduced from 45.0x to **17.5x native `-O2`**).
+* *(Deferred / Future)* **JIT backend:** Lowering resolved bytecode + static handle types to a baseline JIT (e.g., Cranelift, asmjit, or LLVM ORC) is deferred until after Optic is implemented.
+
+---
+
+## Phase 6: Optic (`.opc`) High-Level Language *(Next)*
+*Build the Optrich-native high-level language targeting Optrich WAT directly (see [docs/high-level-language.md](high-level-language.md)).*
+
+* **Frontend (`optic` lexer, parser, AST):** Clean recursive-descent parser for `.opc` modules (`fn`, `struct`, `trait`, `impl`, `let` / `let mut`, `if`/`else`, `while`, `for`, `import`/`export`).
+* **Type checker & automatic split-block layout:**
+  * Partition `struct` fields automatically into raw `bytes` offsets and GC-tracked `refs` slots (`mem.alloc(num_bytes, num_refs)`).
+  * Enforce static read-only capabilities (`ro T`, `ro []u8`) and nullability (`T?`, `null`) at compile time.
+* **Direct-to-WAT codegen:**
+  * Zero-copy slices (`buf[start..end]` → `mem.span`, `clone(s)` → `mem.clone_span`, `readonly(x)` → `mem.readonly`).
+  * Growable lists (`Vec<T>`), strings (`str` / `ro []u8`), closures, and polymorphic traits (`&dyn Trait` → read-only vtable blocks + `call_ref`, static generics → monomorphization).
+  * Cross-module `import` / `export` linking directly over `Runtime` + `Linker`.
+* **Tooling & examples:** CLI compilation (`optic` / `.opc` support in `optrich-vm`), end-to-end test suite, and Optic ports of core examples and benchmarks.
 
 ---
 
 ## MVP Milestones
 
-1. **Milestone 1 (Core VM):** Phase 1 + Phase 2 — split blocks, native memory opcodes, resolved bytecode, and core test suite.
-2. **Milestone 2 (Multi-Module Sharing):** Phase 4 — unified `Runtime`/`Linker`, direct cross-module calls, and zero-copy `as_readonly` sharing demos.
-3. **Milestone 3 (Memory Management):** Phase 3 — precise cross-module GC with stress tests for cycles and chained spans.
-4. **Milestone 4 (Performance & JIT):** Phase 5 — benchmarks and optional prototype JIT backend.
+1. **Milestone 1 (Core VM) — Done:** Phase 1 + Phase 2 — split blocks, native memory opcodes, resolved bytecode, and core test suite.
+2. **Milestone 2 (Multi-Module Sharing) — Done:** Phase 4 — unified `Runtime`/`Linker`, direct cross-module calls, `call_indirect`/`call_ref` vtables, and zero-copy `as_readonly` sharing demos.
+3. **Milestone 3 (Memory Management) — Done:** Phase 3 — precise cross-module GC with stress tests for cycles and chained spans.
+4. **Milestone 4 (Performance Baseline) — Done:** Phase 5 — benchmark suite (`make bench`) and interpreter optimizations (`fib(40)` at 17.5x native `-O2`).
+5. **Milestone 5 (Optic Language) — Next:** Phase 6 — `.opc` compiler emitting Optrich WAT with automatic split-block structs, zero-copy slices, static `ro` safety, and multi-module imports/exports.
+6. **Future (Optional JIT):** Baseline JIT backend for compute-heavy workloads.
