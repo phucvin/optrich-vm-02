@@ -21,6 +21,7 @@ enum class OpCode : uint16_t {
     Return,
     Call,        // imm.u32 = func index (in module's unified import+local space)
     CallIndirect,// imm.u32 = type index, aux = table index
+    CallRef,     // imm.u32 = type index (pops funcref directly — zero tables!)
 
     // Parametric
     Drop,
@@ -40,15 +41,20 @@ enum class OpCode : uint16_t {
     F64Const,
     HandleNull,
     MemConstStr, // imm.u32 = string constant index -> pushes readonly FatHandle
+    RefFunc,     // imm.u32 = unified func index -> pushes FuncRef
+    RefNullFunc, // () -> pushes null FuncRef
+    RefIsNull,   // (funcref) -> i32
 
-    // Native Split-Block Memory Opcodes (Phases 2 & 3)
+    // Native Split-Block & Vtable Memory Opcodes
     MemAlloc,      // (num_bytes: i32, num_refs: i32) -> rw_handle
+    MemAllocVtable,// (num_funcs: i32) -> rw_handle (vtable block holding funcrefs)
     MemSpan,       // (h: handle, byte_off: i32, byte_len: i32) -> handle
     MemRefSpan,    // (h: handle, ref_off: i32, ref_len: i32) -> handle
     MemReadOnly,   // (h: handle) -> ro_handle
     MemCloneSpan,  // (h: handle) -> handle (detaches slice from backing buffer)
     MemByteLen,    // (h: handle) -> i32
     MemRefLen,     // (h: handle) -> i32
+    MemFuncLen,    // (h: handle) -> i32
     MemIsReadOnly, // (h: handle) -> i32
     MemIsNull,     // (h: handle) -> i32
     MemEq,         // (h1: handle, h2: handle) -> i32
@@ -71,9 +77,11 @@ enum class OpCode : uint16_t {
     MemWriteF32,
     MemWriteF64,
 
-    // Reference-slot ops
+    // Reference-slot & Vtable-slot ops
     MemReadRef,    // (h: handle, slot_idx: i32) -> handle
     MemWriteRef,   // (h: handle, slot_idx: i32, child: handle) -> ()
+    MemReadFunc,   // (h: handle, slot_idx: i32) -> funcref
+    MemWriteFunc,  // (h: handle, slot_idx: i32, fn: funcref) -> ()
 
     // Bulk memory ops
     MemCopy,       // (dst, dst_off, src, src_off, len) -> ()

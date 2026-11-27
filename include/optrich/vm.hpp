@@ -20,17 +20,6 @@ struct HostFuncEntry {
     HostFunc      fn;
 };
 
-// Resolved callable reference carrying its target ModuleInstance* (or HostFuncEntry*)
-// so cross-module direct calls and call_indirect push CallFrames with zero boxing/copying.
-struct FuncRef {
-    ModuleInstance*      instance     = nullptr;
-    uint32_t             localFuncIdx = 0;
-    const HostFuncEntry* host         = nullptr;
-
-    bool is_null() const { return instance == nullptr && host == nullptr; }
-    bool is_host() const { return host != nullptr; }
-};
-
 struct FuncTable {
     std::vector<FuncRef> elements;
 };

@@ -295,6 +295,10 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         stack_base[idx].type = ValType::Handle;
         stack_base[idx].handle = h;
     };
+    auto set_funcref = [&](size_t idx, FuncRef f) {
+        stack_base[idx].type = ValType::FuncRef;
+        stack_base[idx].funcref = f;
+    };
 
     auto do_branch = [&](uint32_t target_pc, uint16_t arity, uint32_t drop_count) {
         if (drop_count > 0) {
@@ -368,6 +372,7 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         &&L_Return,
         &&L_Call,
         &&L_CallIndirect,
+        &&L_CallRef,
         &&L_Drop,
         &&L_Select,
         &&L_LocalGet,
@@ -381,13 +386,18 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         &&L_F64Const,
         &&L_HandleNull,
         &&L_MemConstStr,
+        &&L_RefFunc,
+        &&L_RefNullFunc,
+        &&L_RefIsNull,
         &&L_MemAlloc,
+        &&L_MemAllocVtable,
         &&L_MemSpan,
         &&L_MemRefSpan,
         &&L_MemReadOnly,
         &&L_MemCloneSpan,
         &&L_MemByteLen,
         &&L_MemRefLen,
+        &&L_MemFuncLen,
         &&L_MemIsReadOnly,
         &&L_MemIsNull,
         &&L_MemEq,
@@ -407,6 +417,8 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         &&L_MemWriteF64,
         &&L_MemReadRef,
         &&L_MemWriteRef,
+        &&L_MemReadFunc,
+        &&L_MemWriteFunc,
         &&L_MemCopy,
         &&L_MemFill,
         &&L_MemCmp,
@@ -540,6 +552,22 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         DISPATCH();
     }
 
+    CASE_OP(CallRef) {
+        FuncRef target = stack_base[--sp].funcref;
+        if (target.is_null()) {
+            throw Trap("call_ref on null funcref");
+        }
+        const FuncSignature& expected_sig = cur_inst->module().types[ins->imm.u32];
+        const FuncSignature& actual_sig =
+            target.is_host() ? target.host->sig
+                             : target.instance->module().funcs[target.localFuncIdx].sig;
+        if (actual_sig != expected_sig) {
+            throw Trap("call_ref signature mismatch");
+        }
+        dispatch_call(target);
+        DISPATCH();
+    }
+
     CASE_OP(Drop)
         --sp;
         DISPATCH();
@@ -597,7 +625,21 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         set_handle(sp++, str_handles[ins->imm.u32]);
         DISPATCH();
 
-    // --- Native Split-Block Memory Opcodes (GC-safepointed!) ---
+    CASE_OP(RefFunc)
+        set_funcref(sp++, cur_inst->func_ref(ins->imm.u32));
+        DISPATCH();
+
+    CASE_OP(RefNullFunc)
+        set_funcref(sp++, FuncRef::null());
+        DISPATCH();
+
+    CASE_OP(RefIsNull) {
+        FuncRef f = stack_base[sp - 1].funcref;
+        set_i32(sp - 1, f.is_null() ? 1 : 0);
+        DISPATCH();
+    }
+
+    // --- Native Split-Block & Vtable Memory Opcodes (GC-safepointed!) ---
 
     CASE_OP(MemAlloc) {
         int32_t num_refs  = stack_base[sp - 1].i32;
@@ -609,6 +651,18 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         activeSp_ = sp; // GC safepoint: all live handles below sp are traced
         FatHandle res = store.alloc(static_cast<uint32_t>(num_bytes),
                                     static_cast<uint32_t>(num_refs));
+        set_handle(sp++, res);
+        DISPATCH();
+    }
+
+    CASE_OP(MemAllocVtable) {
+        int32_t num_funcs = stack_base[sp - 1].i32;
+        if (num_funcs < 0) {
+            throw Trap("mem.alloc_vtable negative size");
+        }
+        --sp;
+        activeSp_ = sp;
+        FatHandle res = store.alloc_vtable(static_cast<uint32_t>(num_funcs));
         set_handle(sp++, res);
         DISPATCH();
     }
@@ -672,6 +726,12 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
     CASE_OP(MemRefLen) {
         FatHandle h = stack_base[sp - 1].handle;
         set_i32(sp - 1, static_cast<int32_t>(store.ref_len(h.id)));
+        DISPATCH();
+    }
+
+    CASE_OP(MemFuncLen) {
+        FatHandle h = stack_base[sp - 1].handle;
+        set_i32(sp - 1, static_cast<int32_t>(store.func_len(h.id)));
         DISPATCH();
     }
 
@@ -819,6 +879,21 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         uint32_t slot   = static_cast<uint32_t>(stack_base[--sp].i32);
         FatHandle h     = stack_base[--sp].handle;
         store.write_ref(h.id, slot, child.id);
+        DISPATCH();
+    }
+
+    CASE_OP(MemReadFunc) {
+        uint32_t slot = static_cast<uint32_t>(stack_base[--sp].i32);
+        FatHandle h   = stack_base[sp - 1].handle;
+        set_funcref(sp - 1, store.read_func(h.id, slot));
+        DISPATCH();
+    }
+
+    CASE_OP(MemWriteFunc) {
+        FuncRef fn    = stack_base[--sp].funcref;
+        uint32_t slot = static_cast<uint32_t>(stack_base[--sp].i32);
+        FatHandle h   = stack_base[--sp].handle;
+        store.write_func(h.id, slot, fn);
         DISPATCH();
     }
 

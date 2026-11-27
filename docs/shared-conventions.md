@@ -13,8 +13,9 @@ Optrich VM 02 enables zero-copy sharing across modules over a single `MemoryStor
 * Producers downgrade mutable buffers via `mem.readonly(buf)` before passing them to untrusted or read-only consumers.
 * Reference arrays use `mem.alloc(0, count)` and `mem.ref_span(h, off, sub_count)`, with length queried via `mem.ref_len`.
 
-## 3. Polymorphic Interface Handles (Split Blocks + Cross-Module Tables)
-* An interface/object handle is a split block whose:
-  * **Bytes `[0..4)`** hold an `i32` vtable/method index into a shared `funcref` table (exported by an interface module and imported by implementers).
-  * **Bytes `[4..)`** hold primitive instance fields, and **`refs[0..)`** hold GC-tracked child handles.
-* Implementer modules populate their slots in the shared table via `(elem (i32.const slot) $method ...)`. Because each table entry (`FuncRef`) carries its owning `ModuleInstance*`, invoking `call_indirect` from any module switches module context and pushes a `CallFrame` directly onto the shared call stack with zero boxing or copying.
+## 3. Polymorphic Interface Handles (Go/Rust-Style Trait Objects + `call_ref`)
+* A trait object is a read-only 2-ref split block (`ro_handle` with 0 bytes, 2 refs):
+  * **`refs[0]`**: the underlying pure-data `handle` (no vtable tag needed in its bytes).
+  * **`refs[1]`**: a frozen read-only vtable handle (`mem.readonly(mem.alloc_vtable(N))`) holding unforgeable `funcref` methods (`mem.write_func` / `mem.read_func`).
+* Callers dispatch directly via `call_ref (type $sig)`—no shared tables, no slot coordination, and full GC tracing of both `data` and `vtable`.
+* See [docs/interfaces.md](interfaces.md) for the full design and walkthrough.

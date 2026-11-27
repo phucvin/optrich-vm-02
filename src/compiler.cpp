@@ -19,6 +19,7 @@ std::optional<ValType> parse_val_type(std::string_view s) {
     if (s == "handle")    return ValType::Handle;
     if (s == "rw_handle") return ValType::RwHandle;
     if (s == "ro_handle") return ValType::RoHandle;
+    if (s == "funcref")   return ValType::FuncRef;
     return std::nullopt;
 }
 
@@ -506,6 +507,62 @@ private:
         fn_.code.push_back(Instr::make_u32(OpCode::CallIndirect, type_idx, table_idx));
     }
 
+    void parse_call_ref_header(const std::vector<SExpr>& nodes, size_t start, size_t end,
+                               size_t& out_next, uint32_t& out_type_idx, size_t line) {
+        size_t idx = start;
+        std::optional<uint32_t> explicit_type;
+        if (idx < end && nodes[idx].is_atom() &&
+            (is_ident(nodes[idx]) || (!nodes[idx].text.empty() && std::isdigit(static_cast<unsigned char>(nodes[idx].text[0]))))) {
+            explicit_type = mctx_.resolve_type(nodes[idx++]);
+        } else if (idx < end && nodes[idx].is_list_with_head("type")) {
+            if (nodes[idx].children.size() != 2) {
+                throw CompileError("invalid (type ...) in call_ref at line " + std::to_string(line));
+            }
+            explicit_type = mctx_.resolve_type(nodes[idx++].children[1]);
+        }
+
+        FuncSignature inline_sig;
+        bool has_inline = false;
+        while (idx < end && nodes[idx].is_list_with_head("param")) {
+            has_inline = true;
+            for (size_t k = 1; k < nodes[idx].children.size(); ++k) {
+                if (k == 1 && is_ident(nodes[idx].children[k])) continue;
+                inline_sig.params.push_back(expect_val_type(nodes[idx].children[k]));
+            }
+            ++idx;
+        }
+        while (idx < end && nodes[idx].is_list_with_head("result")) {
+            has_inline = true;
+            for (size_t k = 1; k < nodes[idx].children.size(); ++k) {
+                inline_sig.results.push_back(expect_val_type(nodes[idx].children[k]));
+            }
+            ++idx;
+        }
+
+        if (explicit_type) {
+            out_type_idx = *explicit_type;
+            if (has_inline && mctx_.mod.types[out_type_idx] != inline_sig) {
+                throw CompileError("call_ref inline signature does not match referenced type at line " +
+                                   std::to_string(line));
+            }
+        } else {
+            out_type_idx = mctx_.intern_type(inline_sig);
+        }
+        out_next = idx;
+    }
+
+    void emit_call_ref(uint32_t type_idx, size_t line) {
+        pop_expected(ValType::FuncRef, line); // target funcref on top of stack
+        const FuncSignature& sig = mctx_.mod.types[type_idx];
+        for (size_t k = sig.params.size(); k > 0; --k) {
+            pop_expected(sig.params[k - 1], line);
+        }
+        for (ValType r : sig.results) {
+            push_type(r);
+        }
+        fn_.code.push_back(Instr::make_u32(OpCode::CallRef, type_idx));
+    }
+
     void compile_folded(const SExpr& expr) {
         if (expr.children.empty() || !expr.children[0].is_atom()) {
             throw CompileError("invalid folded instruction at line " + std::to_string(expr.line));
@@ -577,6 +634,25 @@ private:
                                        operand_start, table_idx, type_idx, line);
             compile_sequence(expr.children, operand_start, expr.children.size());
             emit_call_indirect(table_idx, type_idx, line);
+            return;
+        }
+
+        if (op == "call_ref") {
+            size_t operand_start = 1;
+            uint32_t type_idx = 0;
+            parse_call_ref_header(expr.children, 1, expr.children.size(),
+                                  operand_start, type_idx, line);
+            compile_sequence(expr.children, operand_start, expr.children.size());
+            emit_call_ref(type_idx, line);
+            return;
+        }
+
+        if (op == "ref.null") {
+            if (expr.children.size() != 2 || !expr.children[1].is_atom() || expr.children[1].text != "func") {
+                throw CompileError("ref.null expects 'func' at line " + std::to_string(line));
+            }
+            push_type(ValType::FuncRef);
+            fn_.code.push_back(Instr::make(OpCode::RefNullFunc));
             return;
         }
 
@@ -653,6 +729,23 @@ private:
             parse_call_indirect_header(nodes, i + 1, end, next_idx, table_idx, type_idx, line);
             emit_call_indirect(table_idx, type_idx, line);
             return next_idx;
+        }
+
+        if (op == "call_ref") {
+            size_t next_idx = i + 1;
+            uint32_t type_idx = 0;
+            parse_call_ref_header(nodes, i + 1, end, next_idx, type_idx, line);
+            emit_call_ref(type_idx, line);
+            return next_idx;
+        }
+
+        if (op == "ref.null") {
+            if (i + 1 >= end || !nodes[i + 1].is_atom() || nodes[i + 1].text != "func") {
+                throw CompileError("ref.null expects 'func' at line " + std::to_string(line));
+            }
+            push_type(ValType::FuncRef);
+            fn_.code.push_back(Instr::make(OpCode::RefNullFunc));
+            return i + 2;
         }
 
         if (op == "br_table") {
@@ -784,7 +877,7 @@ private:
             op == "i32.const" || op == "i64.const" ||
             op == "f32.const" || op == "f64.const" ||
             op == "br" || op == "br_if" || op == "call" ||
-            op == "mem.const_str") {
+            op == "mem.const_str" || op == "ref.func") {
             return 1;
         }
         return 0;
@@ -943,13 +1036,36 @@ private:
             fn_.code.push_back(Instr::make_u32(OpCode::MemConstStr, sidx));
             return;
         }
+        if (op == "ref.func") {
+            uint32_t fidx = mctx_.resolve_func(nodes[imm_idx]);
+            push_type(ValType::FuncRef);
+            fn_.code.push_back(Instr::make_u32(OpCode::RefFunc, fidx));
+            return;
+        }
+        if (op == "ref.null_func") {
+            push_type(ValType::FuncRef);
+            fn_.code.push_back(Instr::make(OpCode::RefNullFunc));
+            return;
+        }
+        if (op == "ref.is_null") {
+            pop_expected(ValType::FuncRef, line);
+            push_type(ValType::I32);
+            fn_.code.push_back(Instr::make(OpCode::RefIsNull));
+            return;
+        }
 
-        // Native Split-Block Memory Opcodes
+        // Native Split-Block & Vtable Memory Opcodes
         if (op == "mem.alloc") {
             pop_expected(ValType::I32, line);
             pop_expected(ValType::I32, line);
             push_type(ValType::RwHandle);
             fn_.code.push_back(Instr::make(OpCode::MemAlloc));
+            return;
+        }
+        if (op == "mem.alloc_vtable") {
+            pop_expected(ValType::I32, line);
+            push_type(ValType::RwHandle);
+            fn_.code.push_back(Instr::make(OpCode::MemAllocVtable));
             return;
         }
         if (op == "mem.span") {
@@ -990,6 +1106,12 @@ private:
             pop_handle(line, false);
             push_type(ValType::I32);
             fn_.code.push_back(Instr::make(OpCode::MemRefLen));
+            return;
+        }
+        if (op == "mem.func_len") {
+            pop_handle(line, false);
+            push_type(ValType::I32);
+            fn_.code.push_back(Instr::make(OpCode::MemFuncLen));
             return;
         }
         if (op == "mem.is_readonly") {
@@ -1052,6 +1174,20 @@ private:
             pop_expected(ValType::I32, line);
             pop_handle(line, true);
             fn_.code.push_back(Instr::make(OpCode::MemWriteRef));
+            return;
+        }
+        if (op == "mem.read_func") {
+            pop_expected(ValType::I32, line);
+            pop_handle(line, false);
+            push_type(ValType::FuncRef);
+            fn_.code.push_back(Instr::make(OpCode::MemReadFunc));
+            return;
+        }
+        if (op == "mem.write_func") {
+            pop_expected(ValType::FuncRef, line);
+            pop_expected(ValType::I32, line);
+            pop_handle(line, true);
+            fn_.code.push_back(Instr::make(OpCode::MemWriteFunc));
             return;
         }
 

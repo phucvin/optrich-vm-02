@@ -166,6 +166,74 @@ TEST(host_func_interop_and_link_errors) {
     )"), LinkError);
 }
 
+TEST(go_rust_style_trait_objects_with_vtable_and_call_ref) {
+    Runtime rt;
+
+    // `rect` has ZERO imports and ZERO tables — builds a read-only vtable [area, perim]
+    rt.instantiate_wat("rect", R"(
+    (module
+      (global $vt (mut handle) (handle.null))
+      (func $area (param $s handle) (result i32)
+        (i32.mul (mem.read_i32 (local.get $s) (i32.const 0))
+                 (mem.read_i32 (local.get $s) (i32.const 4))))
+      (func $perim (param $s handle) (result i32)
+        (i32.mul (i32.const 2)
+                 (i32.add (mem.read_i32 (local.get $s) (i32.const 0))
+                          (mem.read_i32 (local.get $s) (i32.const 4)))))
+      (func (export "new_rect") (param $w i32) (param $h i32) (result ro_handle)
+        (local $d rw_handle)
+        (local $v rw_handle)
+        (local $t rw_handle)
+        (if (mem.is_null (global.get $vt))
+          (then
+            (local.set $v (mem.alloc_vtable (i32.const 2)))
+            (mem.write_func (local.get $v) (i32.const 0) (ref.func $area))
+            (mem.write_func (local.get $v) (i32.const 1) (ref.func $perim))
+            (global.set $vt (mem.readonly (local.get $v)))))
+        (local.set $d (mem.alloc (i32.const 8) (i32.const 0)))
+        (mem.write_i32 (local.get $d) (i32.const 0) (local.get $w))
+        (mem.write_i32 (local.get $d) (i32.const 4) (local.get $h))
+        (local.set $t (mem.alloc (i32.const 0) (i32.const 2)))
+        (mem.write_ref (local.get $t) (i32.const 0) (local.get $d))
+        (mem.write_ref (local.get $t) (i32.const 1) (global.get $vt))
+        (mem.readonly (local.get $t)))
+    )
+    )");
+
+    // `driver` calls both methods via `call_ref` and verifies read-only vtable protection
+    rt.instantiate_wat("driver", R"(
+    (module
+      (type $m (func (param handle) (result i32)))
+      (import "rect" "new_rect" (func $new_rect (param i32 i32) (result ro_handle)))
+
+      (func (export "run") (result i32)
+        (local $t ro_handle)
+        (local $d handle)
+        (local $vt handle)
+        (local.set $t (call $new_rect (i32.const 3) (i32.const 4)))
+        (local.set $d (mem.read_ref (local.get $t) (i32.const 0)))
+        (local.set $vt (mem.read_ref (local.get $t) (i32.const 1)))
+        ;; area(3,4)=12 + perim(3,4)=14 + func_len(vt)=2 => 28
+        (i32.add
+          (i32.add
+            (call_ref (type $m) (local.get $d) (mem.read_func (local.get $vt) (i32.const 0)))
+            (call_ref (type $m) (local.get $d) (mem.read_func (local.get $vt) (i32.const 1))))
+          (mem.func_len (local.get $vt))))
+
+      ;; Attempting to tamper with frozen vtable traps at runtime!
+      (func (export "tamper")
+        (local $t ro_handle)
+        (local $vt handle)
+        (local.set $t (call $new_rect (i32.const 1) (i32.const 1)))
+        (local.set $vt (mem.read_ref (local.get $t) (i32.const 1)))
+        (mem.write_func (local.get $vt) (i32.const 0) (ref.null func)))
+    )
+    )");
+
+    ASSERT_EQ(rt.invoke("driver", "run")[0].i32, 28);
+    ASSERT_THROWS(rt.invoke("driver", "tamper"), Trap);
+}
+
 int main() {
     return optrich_test::run_all_tests();
 }

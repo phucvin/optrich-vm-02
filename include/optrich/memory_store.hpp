@@ -19,6 +19,7 @@ struct MemoryBlock {
     // Backing storage (empty if this block is a span)
     std::vector<uint8_t>  bytes;
     std::vector<HandleId> refs;
+    std::vector<FuncRef>  funcs; // method slots for vtable blocks (empty for normal blocks)
 
     // Span view info (if rootHandle != kNullHandle, points to the ultimate owning root block)
     HandleId rootHandle = kNullHandle;
@@ -26,6 +27,7 @@ struct MemoryBlock {
     uint32_t byteSize   = 0;
     uint32_t refOffset  = 0;
     uint32_t refCount   = 0;
+    uint32_t funcCount  = 0;
 
     bool readOnly = false;
     bool marked   = false;
@@ -42,6 +44,9 @@ public:
 
     // Allocate a read-only byte block initialized from a string/byte slice.
     FatHandle alloc_readonly_bytes(std::string_view data);
+
+    // Allocate a vtable block holding `num_funcs` unforgeable FuncRef method slots.
+    FatHandle alloc_vtable(uint32_t num_funcs);
 
     // Create a zero-copy byte sub-span backed by the same rootHandle, inheriting readOnly.
     // The new span has refCount = 0 (pure byte view).
@@ -64,6 +69,7 @@ public:
     // Metadata queries
     uint32_t byte_len(HandleId h) const;
     uint32_t ref_len(HandleId h) const;
+    uint32_t func_len(HandleId h) const;
     bool     is_readonly(HandleId h) const;
     bool     is_alive(HandleId h) const;
     HandleId root_of(HandleId h) const;
@@ -71,6 +77,10 @@ public:
     // Reference-slot operations (bounds & readOnly checked)
     FatHandle read_ref(HandleId h, uint32_t slot_idx) const;
     void      write_ref(HandleId h, uint32_t slot_idx, HandleId child);
+
+    // FuncRef vtable-slot operations (bounds & readOnly checked)
+    FuncRef read_func(HandleId h, uint32_t slot_idx) const;
+    void    write_func(HandleId h, uint32_t slot_idx, FuncRef fn);
 
     // Direct byte read/write helpers (for host / C++ tests; VM uses FatHandle fast path)
     void read_bytes(HandleId h, uint32_t byte_off, void* dst, uint32_t len) const;

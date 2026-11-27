@@ -111,7 +111,26 @@ FatHandle MemoryStore::alloc_readonly_bytes(std::string_view data) {
     blk.byteSize = len;
     blk.refOffset = 0;
     blk.refCount = 0;
+    blk.funcCount = 0;
     blk.readOnly = true;
+    blk.marked = false;
+    blk.alive = true;
+    ++liveCount_;
+    return to_fat_handle(id);
+}
+
+FatHandle MemoryStore::alloc_vtable(uint32_t num_funcs) {
+    maybe_trigger_gc();
+    HandleId id = allocate_slot();
+    MemoryBlock& blk = objects_[id];
+    blk.funcs.assign(num_funcs, FuncRef::null());
+    blk.rootHandle = kNullHandle;
+    blk.byteOffset = 0;
+    blk.byteSize = 0;
+    blk.refOffset = 0;
+    blk.refCount = 0;
+    blk.funcCount = num_funcs;
+    blk.readOnly = false;
     blk.marked = false;
     blk.alive = true;
     ++liveCount_;
@@ -176,6 +195,7 @@ FatHandle MemoryStore::as_readonly(HandleId h) {
     uint32_t b_sz  = src.byteSize;
     uint32_t r_off = src.refOffset;
     uint32_t r_cnt = src.refCount;
+    uint32_t f_cnt = src.funcCount;
 
     HandleId id = allocate_slot();
     MemoryBlock& view = objects_[id];
@@ -184,6 +204,7 @@ FatHandle MemoryStore::as_readonly(HandleId h) {
     view.byteSize = b_sz;
     view.refOffset = r_off;
     view.refCount = r_cnt;
+    view.funcCount = f_cnt;
     view.readOnly = true;
     view.marked = false;
     view.alive = true;
@@ -235,6 +256,10 @@ uint32_t MemoryStore::ref_len(HandleId h) const {
     return get_block(h).refCount;
 }
 
+uint32_t MemoryStore::func_len(HandleId h) const {
+    return get_block(h).funcCount;
+}
+
 bool MemoryStore::is_readonly(HandleId h) const {
     return get_block(h).readOnly;
 }
@@ -271,6 +296,27 @@ void MemoryStore::write_ref(HandleId h, uint32_t slot_idx, HandleId child) {
     }
     MemoryBlock& root = get_root_mut(blk);
     root.refs[blk.refOffset + slot_idx] = child;
+}
+
+FuncRef MemoryStore::read_func(HandleId h, uint32_t slot_idx) const {
+    const MemoryBlock& blk = get_block(h);
+    if (slot_idx >= blk.funcCount) {
+        throw Trap("mem.read_func out of bounds");
+    }
+    const MemoryBlock& root = get_root(blk);
+    return root.funcs[slot_idx];
+}
+
+void MemoryStore::write_func(HandleId h, uint32_t slot_idx, FuncRef fn) {
+    MemoryBlock& blk = get_block_mut(h);
+    if (blk.readOnly) {
+        throw Trap("mem.write_func on read-only handle");
+    }
+    if (slot_idx >= blk.funcCount) {
+        throw Trap("mem.write_func out of bounds");
+    }
+    MemoryBlock& root = get_root_mut(blk);
+    root.funcs[slot_idx] = fn;
 }
 
 void MemoryStore::read_bytes(HandleId h, uint32_t byte_off, void* dst, uint32_t len) const {
@@ -362,11 +408,14 @@ GCStats MemoryStore::collect_garbage(const std::vector<HandleId>& roots) {
             blk.bytes.shrink_to_fit();
             blk.refs.clear();
             blk.refs.shrink_to_fit();
+            blk.funcs.clear();
+            blk.funcs.shrink_to_fit();
             blk.rootHandle = kNullHandle;
             blk.byteOffset = 0;
             blk.byteSize = 0;
             blk.refOffset = 0;
             blk.refCount = 0;
+            blk.funcCount = 0;
             blk.readOnly = false;
             blk.alive = false;
             freeList_.push_back(h);
