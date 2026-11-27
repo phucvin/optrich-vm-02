@@ -42,7 +42,7 @@ make bench
 * [Roadmap](docs/roadmap.md) — Phased implementation plan and MVP milestones for `optrich-vm-02`.
 * [Memory Model & Performance](docs/memory-model.md) — Design space, industry prior art (MS-Wasm, Java `MemorySegment`, CHERI), and interpreter/JIT performance strategy.
 * [Garbage Collection](docs/gc.md) — GC options and the Split Blocks (`alloc(num_bytes, num_refs)`) design.
-* [No-GC Considerations](docs/no_gc_consideration.md) — Stepping back from tracing GC: scoped arenas, manual `free()` with generational handles, unforgeability without GC, and forgeable-handle tradeoffs.
+* [No-GC Considerations](docs/no-gc-consideration.md) — Stepping back from tracing GC: scoped arenas, manual `free()` with generational handles, unforgeability without GC, and forgeable-handle tradeoffs.
 * [Shared Conventions](docs/shared-conventions.md) — Minimal conventions for shared UTF-8 string spans, typed slices, and polymorphic interface handles.
 * [Polymorphic Interfaces](docs/interfaces.md) — Go/Rust-style trait objects using `funcref`, read-only vtable blocks, and `call_ref`.
 * [Interpreter Optimizations & Benchmarks](docs/interpreter-optimizations.md) — `CallLocal`, primitive slot fast paths, peephole superinstructions, and before/after benchmark results.
