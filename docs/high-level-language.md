@@ -79,13 +79,13 @@ Because `optrich-vm-02` is designed for **multi-module interoperability** (Phase
 
 ---
 
-## 3. Chosen Direction: Option 3 — Optrich-Native High-Level Language
+## 3. Chosen Direction: Option 3 — **Optic** (`.opc`)
 
-We have selected **Option 3** as the primary high-level language strategy for `optrich-vm-02`. Designing a compact language around the split-block capability model avoids the impedance mismatch of C while keeping the compiler small, predictable, and directly aligned with Optrich WAT.
+We have selected **Option 3** as the primary high-level language strategy for `optrich-vm-02`, named **Optic** (`.opc`). Designing a compact language around the split-block capability model avoids the impedance mismatch of C while keeping the compiler small, predictable, and directly aligned with Optrich WAT.
 
 ### Core Language-to-VM Lowering Model
 
-| Language Feature | Optrich VM 02 Lowering |
+| Optic Feature | Optrich VM 02 Lowering |
 | :--- | :--- |
 | **Primitives** (`i32`, `i64`, `f32`, `f64`, `bool`, `u8`) | Native stack/local values (`i32`, `i64`, `f32`, `f64`) |
 | **Managed `struct`s** (GC'd reference types) | Compiler partitions primitive fields into `bytes` offsets and reference fields into `refs` indices → `mem.alloc(num_bytes, num_refs)` |
@@ -93,14 +93,116 @@ We have selected **Option 3** as the primary high-level language strategy for `o
 | **Reference arrays & growable lists** (`[]T`, `Vec<T>`) | `mem.alloc(0, len)` + `mem.read_ref` / `mem.write_ref`, or the header+backing indirection pattern (see `examples/ref_vec_demo.wat`) |
 | **Read-only capabilities** (`ro T`, `ro []u8`, `readonly(x)`) | Compile-time `ro_handle` type + `mem.readonly` downgrade for zero-copy cross-module sharing |
 | **Nullability** (`T?`, `null`) | `handle.null` + `mem.is_null` checks |
-| **Interfaces & function values** | Phase 4 `table` + `call_indirect` + `(handle, vtable_idx)` pairs (see [docs/shared-conventions.md](shared-conventions.md)) |
+| **Interfaces & function values** (`trait`, `dyn Trait`, closures) | Phase 4 `table` + `call_indirect` + `(handle, vtable_idx)` pairs (see [docs/shared-conventions.md](shared-conventions.md)) |
 | **Modules** (`import` / `export`) | Direct Optrich module `import`/`export` over the shared `Runtime` + `Linker` |
 
 ### Key Design Principles
-1. **Automatic split-block layout:** Programmers declare ordinary structs mixing primitives and references; the compiler computes byte offsets and ref slot indices transparently.
+1. **Automatic split-block layout:** Programmers declare ordinary structs mixing primitives and references; the Optic compiler computes byte offsets and ref slot indices transparently.
 2. **Zero-copy slicing by default:** `buf[start..end]` lowers directly to `mem.span` (inheriting `ro`/`rw` permissions), with an explicit `clone(slice)` lowering to `mem.clone_span` when detaching from a large backing buffer.
 3. **Static read-only safety:** Passing a mutable buffer across a module boundary as `ro []u8` emits `mem.readonly` once and lets the VM compiler reject writes at compile time.
 4. **Simple direct-to-WAT compiler:** A recursive-descent frontend + type checker emitting Optrich WAT directly (no LLVM dependency required).
+
+### Optic Example Code
+
+#### Zero-Copy Token Splitter (`ro []u8` + `Vec` + `clone`)
+```rust
+export fn split_byte(input: ro []u8, sep: u8) -> Vec<ro []u8> {
+    let out = Vec<ro []u8>::new(8);
+    let mut start = 0;
+
+    for i in 0..input.len {
+        if input[i] == sep {
+            out.push(input[start..i]);   // emits mem.span (zero-copy ro_handle)
+            start = i + 1;
+        }
+    }
+    out.push(input[start..input.len]);
+    return out;
+}
+
+export fn extract_header(huge_packet: ro []u8) -> ro []u8 {
+    let parts = split_byte(huge_packet, b'\n');
+    return clone(parts[0]);              // emits mem.clone_span -> huge_packet can be GC'd
+}
+```
+
+#### Mixed Structs & Nullable Links (Automatic Split-Block Layout)
+```rust
+struct Entry {
+    id: i32,          // bytes[0..4)
+    score: f64,       // bytes[4..12)
+    name: ro []u8,    // refs[0]
+    left: Entry?,     // refs[1]
+    right: Entry?,    // refs[2]
+}
+
+fn find_score(node: Entry?, target_id: i32) -> f64 {
+    let mut cur = node;
+    while cur != null {
+        if target_id == cur.id {
+            return cur.score;
+        }
+        cur = if target_id < cur.id { cur.left } else { cur.right };
+    }
+    return -1.0;
+}
+```
+
+#### Multi-Module Zero-Copy Sharing (`rw` → `ro` Downgrade)
+```rust
+// --- module: inspector ---
+export fn count_zeros(view: ro []u8) -> i32 {
+    let mut n = 0;
+    for i in 0..view.len {
+        if view[i] == 0 { n += 1; }
+    }
+    // view[0] = 1;  <-- compile-time error: cannot write to `ro []u8`
+    return n;
+}
+
+// --- module: producer ---
+import inspector::count_zeros;
+
+export fn main() -> i32 {
+    let buf = new [u8; 64];              // mem.alloc(64, 0) -> rw_handle
+    buf[0] = 42;
+    buf[1] = 0;
+    buf[2] = 7;
+
+    // Pass only the first 16 bytes as read-only (zero-copy mem.span + mem.readonly)
+    return count_zeros(readonly(buf[0..16]));
+}
+```
+
+#### Trait Dispatch (`dyn Trait` via Phase 4 `call_indirect`)
+```rust
+trait Hasher {
+    fn feed(self, chunk: ro []u8);
+    fn finish(self) -> i32;
+}
+
+struct XorHasher {
+    acc: i32,
+}
+
+impl Hasher for XorHasher {
+    fn feed(self, chunk: ro []u8) {
+        for i in 0..chunk.len {
+            self.acc ^= chunk[i] as i32;
+        }
+    }
+    fn finish(self) -> i32 {
+        return self.acc;
+    }
+}
+
+export fn hash_all(h: dyn Hasher, chunks: ro []ro []u8) -> i32 {
+    for i in 0..chunks.len {
+        h.feed(chunks[i]);               // cross-module call_indirect
+    }
+    return h.finish();
+}
+```
 
 ---
 
