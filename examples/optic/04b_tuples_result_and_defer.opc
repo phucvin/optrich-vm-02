@@ -1,0 +1,48 @@
+// Example 04b — Unboxed Stack Tuples, `Result<T, E>`, `?` Propagation, and LIFO `defer`
+
+import host::trace_i32;
+
+// Unboxed stack tuple (i32, i32) via Wasm multi-value return
+fn divmod(a: i32, b: i32) -> (i32, i32) {
+    return (a / b, a % b);
+}
+
+// Unboxed Result<i32, i32> -> multi-value (is_err: i32, val_or_err: i32)
+fn checked_div(a: i32, b: i32) -> Result<i32, i32> {
+    if b == 0 {
+        return Result::Err(100);
+    }
+    return Result::Ok(a / b);
+}
+
+fn compute_with_defer(a: i32, b: i32) -> Result<i32, i32> {
+    defer {
+        trace_i32("defer.outer", 1);
+    }
+    defer {
+        trace_i32("defer.inner", 2);
+    }
+    // `?` runs active defer blocks in LIFO order before propagating Err(100)
+    let q = checked_div(a, b)?;
+    return Result::Ok(q * 10);
+}
+
+export fn main() -> i32 {
+    let (q, r) = divmod(23, 5);
+    trace_i32("step1.divmod_q", q);
+    trace_i32("step2.divmod_r", r);
+
+    let ok_val = match compute_with_defer(20, 4) {
+        Result::Ok(v) => v,
+        Result::Err(_) => -1,
+    };
+    trace_i32("step3.ok_res", ok_val);
+
+    let err_code = match compute_with_defer(20, 0) {
+        Result::Ok(_) => -1,
+        Result::Err(e) => e,
+    };
+    trace_i32("step4.err_code", err_code);
+
+    return q + r + ok_val + err_code;
+}

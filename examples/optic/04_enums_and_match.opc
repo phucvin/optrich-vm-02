@@ -1,0 +1,82 @@
+// Example 04 — Tagged Split-Block Enums, `match` (`br_table`), GC-Safe Variant Overwrite, and `Option<T>`
+
+import host::trace_i32;
+import host::trace_f64;
+import host::trace_meta;
+import host::trace_gc;
+
+struct BoxedTag {
+    code: i32, // bytes[0..4)
+}
+
+enum Shape {
+    Circle(f64),              // tag=0, bytes[8..16)=r
+    Rect(f64, f64),           // tag=1, bytes[8..16)=w, bytes[16..24)=h
+    Labelled(str, BoxedTag),  // tag=2, refs[0]=name, refs[1]=tag
+}
+// Total layout: mem.alloc(24, 2)
+
+fn shape_area(s: ro Shape) -> f64 {
+    return match s {
+        Shape::Circle(r) => 3.14 * r * r,
+        Shape::Rect(w, h) => w * h,
+        Shape::Labelled(_, tag) => tag.code as f64,
+    };
+}
+
+fn shape_reset_to_circle(s: Shape, r: f64) {
+    // In-place variant overwrite: compiler nulls inactive refs[0..2) for GC safety!
+    *s = Shape::Circle(r);
+}
+
+// Primitive Option<i32> -> unboxed multi-value (is_some: i32, val: i32)
+fn find_even(a: i32, b: i32) -> Option<i32> {
+    if a % 2 == 0 { return Option::Some(a); }
+    if b % 2 == 0 { return Option::Some(b); }
+    return Option::None;
+}
+
+// Handle Option<BoxedTag> -> niche-optimized nullable handle (BoxedTag?)
+fn maybe_tag(create: bool) -> Option<BoxedTag> {
+    if create {
+        return Option::Some(BoxedTag { code: 77 });
+    }
+    return Option::None;
+}
+
+export fn main() -> i32 {
+    let s1 = Shape::Circle(2.0);
+    let s2 = Shape::Rect(3.0, 5.0);
+    let s3 = Shape::Labelled("hero", BoxedTag { code: 42 });
+
+    trace_f64("step1.circle_area", shape_area(readonly(s1)));
+    trace_f64("step2.rect_area", shape_area(readonly(s2)));
+    let code = shape_area(readonly(s3)) as i32;
+    trace_i32("step3.labelled_code", code);
+    trace_meta("step4.s3_meta", s3);
+
+    // Overwrite s3 from Labelled -> Circle; BoxedTag(42) becomes unreachable & swept by GC!
+    shape_reset_to_circle(s3, 1.0);
+    trace_gc("step5.gc_after_variant_swap");
+
+    let n1 = match find_even(3, 5) {
+        Option::Some(v) => v,
+        Option::None => -1,
+    };
+    trace_i32("step6.opt_prim_none", n1);
+
+    let n2 = match find_even(3, 6) {
+        Option::Some(v) => v,
+        Option::None => -1,
+    };
+    trace_i32("step7.opt_prim_some", n2);
+
+    let t = maybe_tag(true);
+    let t_code = match t {
+        Option::Some(bt) => bt.code,
+        Option::None => 0,
+    };
+    trace_i32("step8.opt_ref_some", t_code);
+
+    return code + n2 + t_code;
+}

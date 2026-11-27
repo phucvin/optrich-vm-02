@@ -239,7 +239,35 @@ Lowers to a regular module function `$Counter__inc` taking `(param $self rw_hand
 
 ---
 
-## 7. Open Design Questions (To Resolve Across Iterations)
+## 7. Enums, `match`, Tuples, `Result`, `?` & `defer`
+
+### 7.1 Tagged Split-Block `enum`s
+An `enum` with variants is lowered to a single split block:
+* `bytes[0..4)`: `i32` discriminant tag (`0, 1, ..., N-1`).
+* `bytes[4..)`: union of primitive payload fields across all variants (each field naturally aligned; total `num_bytes` is the max byte size across variants).
+* `refs[0..)`: union of reference payload fields across all variants (`num_refs` is the max ref count across variants).
+* **GC-safe variant overwrite:** Whenever an enum instance is overwritten in-place with a variant that uses fewer `refs` slots than `num_refs`, the compiler **must write `handle.null`** to all unused `refs` slots so the precise GC does not retain dead references from the previous variant.
+
+### 7.2 `match` Lowering
+* Multi-variant `match e { ... }` lowers to a Wasm `br_table` over the discriminant tag loaded from `bytes[0..4)` (dense `0..N-1` jump table).
+* Two-variant `Option` / `Result` matches lower directly to `(if ...)`.
+
+### 7.3 `Option<T>`, `Result<T, E>` & Unboxed Stack Tuples `(A, B)`
+* **Unboxed stack tuples `(A, B)`:** Lowered to multiple Wasm stack values / locals (`$t_0`, `$t_1`) and multi-value function returns `(result A B)` with zero heap allocation.
+* **`Option<T>`:**
+  * When `T` is a handle type (`MyStruct`, `str`, `[]u8`), `Option<T>` uses **null-niche optimization** and lowers identically to `T?` (`handle.null` = `None`, non-null = `Some(h)`).
+  * When `T` is a primitive (`i32`, `f64`, etc.), `Option<T>` lowers on the stack/return boundary to an unboxed multi-value pair `(is_some: i32, val: T)` (or a `mem.alloc(4 + sizeof(T), 0)` split block when boxed in a heap container).
+* **`Result<T, E>`:**
+  * Lowers on the stack/return boundary to an unboxed multi-value tuple `(is_err: i32, ok_val: T, err_val: E)` (or `(is_err: i32, payload: T)` when `T` and `E` share the same Wasm `ValType`), avoiding heap allocation on the happy path.
+* **`?` Error Propagation:**
+  * `let x = expr?;` checks `is_err`; if non-zero, executes all active `defer` blocks in LIFO order and returns the `Err` multi-value immediately.
+
+### 7.4 `defer { ... }`
+`defer` registers cleanup code to run in **LIFO (last-in, first-out) order** on every exit path from the enclosing scope (normal fallthrough, explicit `return`, or `?` early return). The compiler lowers `defer` by emitting the active deferred blocks before each return point (or branching to a shared cleanup epilogue).
+
+---
+
+## 8. Open Design Questions (To Resolve Across Iterations)
 
 1. **Implicit vs. explicit `readonly(...)`:** Should passing `[]u8` to a `ro []u8` parameter require explicit `readonly(buf)` or auto-insert `mem.readonly`? (Explicit makes the capability downgrade visible; implicit is more ergonomic.)
 2. **Shallow vs. transitive `ro T`:** If `e: ro Entry` has a mutable child field `child: Node`, should `e.child` be `ro Node` (transitive) or `Node` (shallow)?

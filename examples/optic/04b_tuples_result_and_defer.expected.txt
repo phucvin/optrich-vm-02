@@ -1,0 +1,9 @@
+step1.divmod_q: 4
+step2.divmod_r: 3
+defer.inner: 2
+defer.outer: 1
+step3.ok_res: 50
+defer.inner: 2
+defer.outer: 1
+step4.err_code: 100
+return: 157

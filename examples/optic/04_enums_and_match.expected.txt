@@ -1,0 +1,9 @@
+step1.circle_area: 12.56
+step2.rect_area: 15
+step3.labelled_code: 42
+step4.s3_meta: ro=false bytes=24 refs=2
+step5.gc_after_variant_swap: live=12 swept=4
+step6.opt_prim_none: -1
+step7.opt_prim_some: 6
+step8.opt_ref_some: 77
+return: 125
