@@ -1,41 +1,51 @@
-// Example 07 (Module 3/3) — `main`: zero-copy cross-module rw->ro sharing + capability-safe host I/O
+// Example 07 (Module 3/3) — `main`: uses `canvas::Canvas` object methods, zero-copy `ro` sharing, and host I/O
 
 import host::trace_i32;
 import host::trace_meta;
 import host::io_open_reader;
 import host::io_read;
 import host::io_write;
-import producer::make_packet;
-import inspector::inspect_checksum;
-import inspector::get_call_count;
+import canvas::Canvas;
+import canvas::get_created_count;
+import renderer::count_ink;
+import renderer::render_row;
+import renderer::get_inspect_count;
 
 export fn main() -> i32 {
-    // 1. Producer allocates rw []u8; main downgrades to ro []u8 and shares zero-copy with inspector
-    let pkt = make_packet(5); // [10, 100, 5] => sum = 115
-    let ro_view = readonly(pkt);
-    let c1 = inspect_checksum(ro_view);
-    trace_i32("step1.checksum_before_mut", c1);
+    // 1. Create a Canvas via library constructor and draw via mutating (`self`) methods
+    let c = Canvas::new(6, 3);
+    c.fill_rect(1, 0, 2, 2, b'#');
 
-    // Mutate original rw handle; inspector sees updated byte through same zero-copy ro_view!
-    pkt[2] = 25; // [10, 100, 25] => sum = 135
-    let c2 = inspect_checksum(ro_view);
-    trace_i32("step2.checksum_after_mut", c2);
+    // Downgrade to `ro Canvas` and share zero-copy with `renderer` (which can only call `ro` methods)
+    let ro_c: ro Canvas = readonly(c);
+    let ink1 = count_ink(ro_c, b'#'); // 4
+    trace_i32("step1.ink_before_mut", ink1);
+    let r0 = render_row("step2.row0_before", ro_c, 0); // ".##..."
 
-    // Second packet verifies producer's global NEXT_SEQ incremented to 101
-    let pkt2 = make_packet(1); // [10, 101, 1] => sum = 112
-    let c3 = inspect_checksum(readonly(pkt2));
-    trace_i32("step3.pkt2_checksum", c3);
-    trace_i32("step4.inspector_calls", get_call_count());
+    // 2. Mutate original `rw` handle; `renderer` sees updates through the same zero-copy `ro_c` handle!
+    c.set_pixel(4, 0, b'#');
+    c.fill_rect(0, 2, 6, 1, b'#');
+    let ink2 = count_ink(ro_c, b'#'); // 11
+    trace_i32("step3.ink_after_mut", ink2);
+    let r1 = render_row("step4.row0_after", ro_c, 0); // ".##.#."
+    let r2 = render_row("step5.row2_after", ro_c, 2); // "######"
 
-    // 2. Capability-safe host I/O: opaque ro_handle reader -> rw []u8 buffer -> ro []u8 writer
+    // Call read-only methods directly on `ro_c`
+    trace_i32("step6.pixel_4_0", ro_c.get_pixel(4, 0) as i32);
+
+    // 3. Second Canvas verifies module global counters across `canvas` and `renderer`
+    let c2 = Canvas::new(4, 2);
+    let ro_c2: ro Canvas = readonly(c2);
+    trace_i32("step7.c2_area", ro_c2.width() * ro_c2.height());
+    trace_i32("step8.canvases_created", get_created_count());
+    trace_i32("step9.renderer_inspects", get_inspect_count());
+
+    // 4. Capability-safe host I/O: opaque ro_handle reader -> rw []u8 buffer -> ro []u8 writer
     let reader = io_open_reader("Optic-IO-Stream");
-    trace_meta("step5.reader_meta", reader);
-
+    trace_meta("step10.reader_meta", reader);
     let chunk = new [u8; 6];
     let n1 = io_read(reader, chunk); // "Optic-" (6 bytes)
-    let w1 = io_write("step6.io_chunk1", readonly(chunk[0..n1]));
-    let n2 = io_read(reader, chunk); // "IO-Str" (6 bytes)
-    let w2 = io_write("step7.io_chunk2", readonly(chunk[0..n2]));
+    let w1 = io_write("step11.io_chunk1", readonly(chunk[0..n1]));
 
-    return c1 + c2 + c3 + w1 + w2;
+    return ink1 + ink2 + r0 + r1 + r2 + w1;
 }

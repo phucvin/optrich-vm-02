@@ -1,0 +1,28 @@
+// Example 07 (Module 2/3) — `renderer`: consumes `ro Canvas` using read-only library methods
+
+import host::io_write;
+import canvas::Canvas;
+
+static mut INSPECT_COUNT: i32 = 0;
+
+export fn count_ink(c: ro Canvas, ch: u8) -> i32 {
+    INSPECT_COUNT += 1;
+    let mut total = 0;
+    for y in 0..c.height() {
+        let line = c.row(y);
+        for x in 0..line.len {
+            if line[x] == ch {
+                total += 1;
+            }
+        }
+    }
+    return total;
+}
+
+export fn render_row(label: str, c: ro Canvas, y: i32) -> i32 {
+    return io_write(label, c.row(y));
+}
+
+export fn get_inspect_count() -> i32 {
+    return INSPECT_COUNT;
+}

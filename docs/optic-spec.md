@@ -282,7 +282,10 @@ Generic structs (`struct Box<T>`, `struct Pair<A, B>`) and generic functions (`f
 
 ## 9. Multi-Module Sharing, Globals & Host Capabilities
 
-* **Cross-module `import` / `export`:** Functions marked `export fn` lower to `(func (export "name") ...)`; `import mod::func;` lowers to `(import "mod" "func" (func $func ...))`. Handles (`rw_handle`, `ro_handle`, `handle`) cross module boundaries directly with zero copying because all modules share one `MemoryStore` and one precise GC.
+* **Cross-module `import` / `export`:**
+  * Functions marked `export fn` lower to `(func (export "name") ...)`; `import mod::func;` lowers to `(import "mod" "func" (func $func ...))`.
+  * Library objects marked `export struct Name { ... }` (with private/encapsulated fields by default) and `export impl Name { ... }` export their methods as `Name__method` (`rw_handle` for `self`, `ro_handle` for `self: ro Self`). Importing `import mod::Name;` lets callers construct and invoke methods directly across module boundaries via static `call` with zero vtable overhead, while `readonly(obj)` restricts other modules to `ro` methods only.
+  * Handles (`rw_handle`, `ro_handle`, `handle`) cross module boundaries directly with zero copying because all modules share one `MemoryStore` and one precise GC.
 * **Module `const` and `static mut` globals:**
   * `const X: i32 = 42;` lowers to an immutable Wasm `(global $X i32 (i32.const 42))` (or inline constant).
   * `static mut COUNT: i32 = 0;` lowers to `(global $COUNT (mut i32) (i32.const 0))`.

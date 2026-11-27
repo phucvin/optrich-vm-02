@@ -30,10 +30,13 @@ Multi-module examples use a subdirectory with one `.opc` + `.guessed.wat` per mo
 
 ```text
 examples/optic/07_multimodule_sharing/
-  inspector.opc
-  inspector.guessed.wat
-  producer.opc
-  producer.guessed.wat
+  canvas.opc
+  canvas.guessed.wat
+  renderer.opc
+  renderer.guessed.wat
+  main.opc
+  main.guessed.wat
+  modules.txt
   expected.txt
 ```
 

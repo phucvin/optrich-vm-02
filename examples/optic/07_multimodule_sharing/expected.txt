@@ -1,8 +1,12 @@
-step1.checksum_before_mut: 115
-step2.checksum_after_mut: 135
-step3.pkt2_checksum: 112
-step4.inspector_calls: 3
-step5.reader_meta: ro=true bytes=4 refs=0
-step6.io_chunk1: "Optic-"
-step7.io_chunk2: "IO-Str"
-return: 374
+step1.ink_before_mut: 4
+step2.row0_before: ".##..."
+step3.ink_after_mut: 11
+step4.row0_after: ".##.#."
+step5.row2_after: "######"
+step6.pixel_4_0: 35
+step7.c2_area: 8
+step8.canvases_created: 2
+step9.renderer_inspects: 2
+step10.reader_meta: ro=true bytes=4 refs=0
+step11.io_chunk1: "Optic-"
+return: 39
