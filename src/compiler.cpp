@@ -938,7 +938,12 @@ private:
             for (ValType r : sig.results) {
                 push_type(r);
             }
-            fn_.code.push_back(Instr::make_u32(OpCode::Call, fidx));
+            if (fidx >= mctx_.mod.funcImports.size()) {
+                uint32_t local_idx = fidx - static_cast<uint32_t>(mctx_.mod.funcImports.size());
+                fn_.code.push_back(Instr::make_u32(OpCode::CallLocal, local_idx));
+            } else {
+                fn_.code.push_back(Instr::make_u32(OpCode::Call, fidx));
+            }
             return;
         }
 
@@ -968,21 +973,30 @@ private:
 
         if (op == "local.get") {
             uint32_t idx = resolve_local(nodes[imm_idx]);
-            push_type(fn_.locals[idx]);
-            fn_.code.push_back(Instr::make_u32(OpCode::LocalGet, idx));
+            ValType lt = fn_.locals[idx];
+            push_type(lt);
+            bool is_prim = (lt == ValType::I32 || lt == ValType::I64 ||
+                            lt == ValType::F32 || lt == ValType::F64);
+            fn_.code.push_back(Instr::make_u32(is_prim ? OpCode::LocalGetPrim : OpCode::LocalGet, idx));
             return;
         }
         if (op == "local.set") {
             uint32_t idx = resolve_local(nodes[imm_idx]);
-            pop_expected(fn_.locals[idx], line);
-            fn_.code.push_back(Instr::make_u32(OpCode::LocalSet, idx));
+            ValType lt = fn_.locals[idx];
+            pop_expected(lt, line);
+            bool is_prim = (lt == ValType::I32 || lt == ValType::I64 ||
+                            lt == ValType::F32 || lt == ValType::F64);
+            fn_.code.push_back(Instr::make_u32(is_prim ? OpCode::LocalSetPrim : OpCode::LocalSet, idx));
             return;
         }
         if (op == "local.tee") {
             uint32_t idx = resolve_local(nodes[imm_idx]);
-            pop_expected(fn_.locals[idx], line);
-            push_type(fn_.locals[idx]);
-            fn_.code.push_back(Instr::make_u32(OpCode::LocalTee, idx));
+            ValType lt = fn_.locals[idx];
+            pop_expected(lt, line);
+            push_type(lt);
+            bool is_prim = (lt == ValType::I32 || lt == ValType::I64 ||
+                            lt == ValType::F32 || lt == ValType::F64);
+            fn_.code.push_back(Instr::make_u32(is_prim ? OpCode::LocalTeePrim : OpCode::LocalTee, idx));
             return;
         }
         if (op == "global.get") {
@@ -1671,6 +1685,8 @@ CompiledModule compile_module(const SExpr& root) {
                 ++idx;
             }
 
+            fn.extraLocals = static_cast<uint32_t>(fn.locals.size()) - fn.paramCount;
+            fn.resultCount = static_cast<uint32_t>(fn.sig.results.size());
             mctx.mod.funcs.push_back(std::move(fn));
             pendingFuncs.push_back(PendingFunc{local_fidx, &item, idx, std::move(localNames)});
         } else if (head == "export") {
@@ -1733,10 +1749,199 @@ CompiledModule compile_module(const SExpr& root) {
         mctx.mod.elems.push_back(std::move(seg));
     }
 
-    // Pass 2: Compile function bodies
+    // Pass 2: Compile function bodies & run peephole superinstruction fusion
+    auto optimize_bytecode = [](CompiledFunc& fn) {
+        const auto& code = fn.code;
+        const size_t n = code.size();
+        if (n == 0) return;
+
+        std::vector<uint8_t> is_target(n + 1, 0);
+        auto mark = [&](uint32_t pc) {
+            if (pc <= n) is_target[pc] = 1;
+        };
+        for (size_t i = 0; i < n; ++i) {
+            switch (code[i].op) {
+                case OpCode::Br:
+                case OpCode::BrIf:
+                case OpCode::BrIfZero:
+                    mark(code[i].imm.u32);
+                    break;
+                case OpCode::BrTable: {
+                    const auto& bt = fn.brTables[code[i].imm.u32];
+                    for (const auto& t : bt.targets) mark(t.targetPc);
+                    mark(bt.defaultTarget.targetPc);
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+
+        auto no_mid_target = [&](size_t start, size_t len) -> bool {
+            for (size_t k = 1; k < len; ++k) {
+                if (is_target[start + k]) return false;
+            }
+            return true;
+        };
+
+        std::vector<Instr> out;
+        out.reserve(n);
+        std::vector<uint32_t> old_to_new(n + 1, 0);
+
+        size_t i = 0;
+        while (i < n) {
+            uint32_t new_pc = static_cast<uint32_t>(out.size());
+            old_to_new[i] = new_pc;
+
+            // 1. Br -> Return (with dropCount == 0) => Return
+            if (code[i].op == OpCode::Br && code[i].aux2 == 0 &&
+                code[i].imm.u32 < n && code[code[i].imm.u32].op == OpCode::Return) {
+                out.push_back(Instr::make(OpCode::Return));
+                ++i;
+                continue;
+            }
+
+            // 2. 4-instruction fusions
+            if (i + 4 <= n && no_mid_target(i, 4)) {
+                // LocalGetPrim(a) + I32Const(c) + I32Add + LocalSetPrim(a) => LocalIncI32(a, c)
+                if (code[i].op == OpCode::LocalGetPrim &&
+                    code[i + 1].op == OpCode::I32Const &&
+                    code[i + 2].op == OpCode::I32Add &&
+                    code[i + 3].op == OpCode::LocalSetPrim &&
+                    code[i].imm.u32 == code[i + 3].imm.u32 &&
+                    code[i].imm.u32 <= 0xFFFFu) {
+                    Instr fused;
+                    fused.op = OpCode::LocalIncI32;
+                    fused.aux = static_cast<uint16_t>(code[i].imm.u32);
+                    fused.imm.i32 = code[i + 1].imm.i32;
+                    out.push_back(fused);
+                    old_to_new[i + 1] = old_to_new[i + 2] = old_to_new[i + 3] = new_pc;
+                    i += 4;
+                    continue;
+                }
+
+                // LocalGetPrim(a) + I32Const(c) + I32LtS + BrIfZero(target, drop=0) => BrIfLocalGeI32C
+                if (code[i].op == OpCode::LocalGetPrim &&
+                    code[i + 1].op == OpCode::I32Const &&
+                    code[i + 2].op == OpCode::I32LtS &&
+                    code[i + 3].op == OpCode::BrIfZero &&
+                    code[i + 3].aux2 == 0 &&
+                    code[i].imm.u32 <= 0xFFFFu) {
+                    Instr fused;
+                    fused.op = OpCode::BrIfLocalGeI32C;
+                    fused.aux = static_cast<uint16_t>(code[i].imm.u32);
+                    fused.aux2 = code[i + 3].imm.u32; // remapped below
+                    fused.imm.i32 = code[i + 1].imm.i32;
+                    out.push_back(fused);
+                    old_to_new[i + 1] = old_to_new[i + 2] = old_to_new[i + 3] = new_pc;
+                    i += 4;
+                    continue;
+                }
+
+                // LocalGetPrim(a) + LocalGetPrim(b) + I32GeS/I32GeU + BrIf(target, drop=0)
+                if (code[i].op == OpCode::LocalGetPrim &&
+                    code[i + 1].op == OpCode::LocalGetPrim &&
+                    (code[i + 2].op == OpCode::I32GeS || code[i + 2].op == OpCode::I32GeU) &&
+                    code[i + 3].op == OpCode::BrIf &&
+                    code[i + 3].aux2 == 0 &&
+                    code[i].imm.u32 <= 0xFFFFu) {
+                    Instr fused;
+                    fused.op = (code[i + 2].op == OpCode::I32GeS) ? OpCode::BrIfLocalGeS : OpCode::BrIfLocalGeU;
+                    fused.aux = static_cast<uint16_t>(code[i].imm.u32);
+                    fused.aux2 = code[i + 1].imm.u32;
+                    fused.imm.u32 = code[i + 3].imm.u32; // remapped below
+                    out.push_back(fused);
+                    old_to_new[i + 1] = old_to_new[i + 2] = old_to_new[i + 3] = new_pc;
+                    i += 4;
+                    continue;
+                }
+            }
+
+            // 3. 3-instruction fusions
+            if (i + 3 <= n && no_mid_target(i, 3)) {
+                // LocalGetPrim(a) + I32Const(c) + I32Sub/I32Add
+                if (code[i].op == OpCode::LocalGetPrim &&
+                    code[i + 1].op == OpCode::I32Const &&
+                    (code[i + 2].op == OpCode::I32Sub || code[i + 2].op == OpCode::I32Add) &&
+                    code[i].imm.u32 <= 0xFFFFu) {
+                    Instr fused;
+                    fused.op = (code[i + 2].op == OpCode::I32Sub) ? OpCode::LocalGetSubI32C : OpCode::LocalGetAddI32C;
+                    fused.aux = static_cast<uint16_t>(code[i].imm.u32);
+                    fused.imm.i32 = code[i + 1].imm.i32;
+                    out.push_back(fused);
+                    old_to_new[i + 1] = old_to_new[i + 2] = new_pc;
+                    i += 3;
+                    continue;
+                }
+
+                // LocalGet(buf) + LocalGetPrim(off) + MemReadI32/MemReadU8
+                if (code[i].op == OpCode::LocalGet &&
+                    code[i + 1].op == OpCode::LocalGetPrim &&
+                    (code[i + 2].op == OpCode::MemReadI32 || code[i + 2].op == OpCode::MemReadU8) &&
+                    code[i].imm.u32 <= 0xFFFFu) {
+                    Instr fused;
+                    fused.op = (code[i + 2].op == OpCode::MemReadI32) ? OpCode::LocalMemReadI32 : OpCode::LocalMemReadU8;
+                    fused.aux = static_cast<uint16_t>(code[i].imm.u32);
+                    fused.imm.u32 = code[i + 1].imm.u32;
+                    out.push_back(fused);
+                    old_to_new[i + 1] = old_to_new[i + 2] = new_pc;
+                    i += 3;
+                    continue;
+                }
+            }
+
+            // 4. 2-instruction fusions: I32Const(c) + I32Add/Sub/Mul/ShrU
+            if (i + 2 <= n && no_mid_target(i, 2) && code[i].op == OpCode::I32Const) {
+                OpCode fused_op = OpCode::Nop;
+                switch (code[i + 1].op) {
+                    case OpCode::I32Add:  fused_op = OpCode::I32AddC;  break;
+                    case OpCode::I32Sub:  fused_op = OpCode::I32SubC;  break;
+                    case OpCode::I32Mul:  fused_op = OpCode::I32MulC;  break;
+                    case OpCode::I32ShrU: fused_op = OpCode::I32ShrUC; break;
+                    default: break;
+                }
+                if (fused_op != OpCode::Nop) {
+                    out.push_back(Instr::make_i32(fused_op, code[i].imm.i32));
+                    old_to_new[i + 1] = new_pc;
+                    i += 2;
+                    continue;
+                }
+            }
+
+            out.push_back(code[i]);
+            ++i;
+        }
+        old_to_new[n] = static_cast<uint32_t>(out.size());
+
+        // Remap all branch target PCs
+        for (auto& ins : out) {
+            switch (ins.op) {
+                case OpCode::Br:
+                case OpCode::BrIf:
+                case OpCode::BrIfZero:
+                case OpCode::BrIfLocalGeS:
+                case OpCode::BrIfLocalGeU:
+                    ins.imm.u32 = old_to_new[ins.imm.u32];
+                    break;
+                case OpCode::BrIfLocalGeI32C:
+                    ins.aux2 = old_to_new[ins.aux2];
+                    break;
+                default:
+                    break;
+            }
+        }
+        for (auto& bt : fn.brTables) {
+            for (auto& t : bt.targets) t.targetPc = old_to_new[t.targetPc];
+            bt.defaultTarget.targetPc = old_to_new[bt.defaultTarget.targetPc];
+        }
+
+        fn.code = std::move(out);
+    };
+
     for (auto& pf : pendingFuncs) {
         FuncCompiler fc(mctx, mctx.mod.funcs[pf.localFuncIdx], std::move(pf.localNames));
         fc.compile_body(pf.expr->children, pf.bodyStart);
+        optimize_bytecode(mctx.mod.funcs[pf.localFuncIdx]);
     }
 
     return std::move(mctx.mod);

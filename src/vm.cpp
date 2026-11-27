@@ -210,7 +210,7 @@ void ModuleInstance::collect_roots(std::vector<HandleId>& out) const {
 VM::VM(size_t max_stack_values, size_t max_call_depth)
     : maxStack_(max_stack_values), maxCallDepth_(max_call_depth) {
     stack_.resize(maxStack_);
-    frames_.reserve(64);
+    frames_.resize(maxCallDepth_);
 }
 
 void VM::collect_roots(std::vector<HandleId>& out) const {
@@ -244,7 +244,6 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
                    ", got " + std::to_string(args.size()));
     }
 
-    frames_.clear();
     Value* const stack_base = stack_.data();
     size_t sp = 0;
 
@@ -268,12 +267,16 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
 
     size_t locals_base = 0;
     Value* locals = stack_base;
-    const Instr* pc = func->code.data();
-    frames_.push_back(CallFrame{cur_inst, func, pc, locals_base, sp});
+    const Instr* code_base = func->code.data();
+    const Instr* pc = code_base;
+    CallFrame* fp = frames_.data();
+    CallFrame* const fp_end = fp + maxCallDepth_;
+    *fp = CallFrame{cur_inst, func, pc, locals_base, sp};
 
     MemoryStore& store = cur_inst->store();
     Value* globals = cur_inst->globals().data();
     const FatHandle* str_handles = cur_inst->string_handles().data();
+    const CompiledFunc* funcs_base = cur_inst->module().funcs.data();
 
     auto set_i32 = [&](size_t idx, int32_t v) {
         stack_base[idx].type = ValType::I32;
@@ -311,7 +314,7 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
             }
             sp -= drop_count;
         }
-        pc = func->code.data() + target_pc;
+        pc = code_base + target_pc;
     };
 
     auto dispatch_call = [&](const FuncRef& target) {
@@ -333,15 +336,15 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
             return;
         }
 
-        if (frames_.size() >= maxCallDepth_) {
+        if (fp + 1 >= fp_end) {
             throw Trap("call stack overflow");
         }
-        frames_.back().pc = pc;
+        fp->pc = pc;
 
         ModuleInstance* next_inst = target.instance;
         const CompiledFunc* callee = &next_inst->module().funcs[target.localFuncIdx];
         size_t new_locals_base = sp - callee->paramCount;
-        size_t extra_locals = callee->locals.size() - callee->paramCount;
+        uint32_t extra_locals = callee->extraLocals;
         if (sp + extra_locals + 64 >= maxStack_) {
             throw Trap("operand stack overflow");
         }
@@ -349,14 +352,19 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
             stack_base[sp++] = Value::zero(callee->locals[k]);
         }
 
-        cur_inst = next_inst;
+        if (next_inst != cur_inst) {
+            cur_inst = next_inst;
+            globals = cur_inst->globals().data();
+            str_handles = cur_inst->string_handles().data();
+            funcs_base = cur_inst->module().funcs.data();
+        }
         func = callee;
-        pc = callee->code.data();
+        code_base = callee->code.data();
+        pc = code_base;
         locals_base = new_locals_base;
         locals = stack_base + locals_base;
-        globals = cur_inst->globals().data();
-        str_handles = cur_inst->string_handles().data();
-        frames_.push_back(CallFrame{cur_inst, func, pc, locals_base, sp});
+        ++fp;
+        *fp = CallFrame{cur_inst, func, pc, locals_base, sp};
     };
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -371,13 +379,17 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         &&L_BrTable,
         &&L_Return,
         &&L_Call,
+        &&L_CallLocal,
         &&L_CallIndirect,
         &&L_CallRef,
         &&L_Drop,
         &&L_Select,
         &&L_LocalGet,
+        &&L_LocalGetPrim,
         &&L_LocalSet,
+        &&L_LocalSetPrim,
         &&L_LocalTee,
+        &&L_LocalTeePrim,
         &&L_GlobalGet,
         &&L_GlobalSet,
         &&L_I32Const,
@@ -449,6 +461,10 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         &&L_F32DemoteF64, &&L_F64PromoteF32,
         &&L_I32ReinterpretF32, &&L_I64ReinterpretF64, &&L_F32ReinterpretI32, &&L_F64ReinterpretI64,
         &&L_I32Extend8S, &&L_I32Extend16S, &&L_I64Extend8S, &&L_I64Extend16S, &&L_I64Extend32S,
+        &&L_LocalIncI32, &&L_LocalGetAddI32C, &&L_LocalGetSubI32C,
+        &&L_BrIfLocalGeI32C, &&L_BrIfLocalGeS, &&L_BrIfLocalGeU,
+        &&L_LocalMemReadI32, &&L_LocalMemReadU8,
+        &&L_I32AddC, &&L_I32SubC, &&L_I32MulC, &&L_I32ShrUC,
     };
 
     const Instr* ins;
@@ -498,36 +514,76 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
     }
 
     CASE_OP(Return) {
-        size_t res_count = func->sig.results.size();
+        uint32_t res_count = func->resultCount;
         size_t ret_dst = locals_base;
-        if (res_count > 0) {
+        if (res_count == 1) {
+            const Value& rv = stack_base[sp - 1];
+            if (static_cast<uint8_t>(rv.type) < static_cast<uint8_t>(ValType::Handle)) {
+                stack_base[ret_dst].type = rv.type;
+                stack_base[ret_dst].i64 = rv.i64;
+            } else {
+                stack_base[ret_dst] = rv;
+            }
+        } else if (res_count > 1) {
             size_t res_src = sp - res_count;
-            for (size_t k = 0; k < res_count; ++k) {
+            for (uint32_t k = 0; k < res_count; ++k) {
                 stack_base[ret_dst + k] = stack_base[res_src + k];
             }
         }
         sp = ret_dst + res_count;
-        frames_.pop_back();
-        if (frames_.empty()) {
+        if (fp == frames_.data()) {
             std::vector<Value> results(res_count);
-            for (size_t k = 0; k < res_count; ++k) {
+            for (uint32_t k = 0; k < res_count; ++k) {
                 results[k] = stack_base[k];
             }
             return results;
         }
-        const CallFrame& prev = frames_.back();
-        cur_inst = prev.inst;
-        func = prev.func;
-        pc = prev.pc;
-        locals_base = prev.localsBase;
+        --fp;
+        ModuleInstance* prev_inst = fp->inst;
+        func = fp->func;
+        code_base = func->code.data();
+        pc = fp->pc;
+        locals_base = fp->localsBase;
         locals = stack_base + locals_base;
-        globals = cur_inst->globals().data();
-        str_handles = cur_inst->string_handles().data();
+        if (prev_inst != cur_inst) {
+            cur_inst = prev_inst;
+            globals = cur_inst->globals().data();
+            str_handles = cur_inst->string_handles().data();
+            funcs_base = cur_inst->module().funcs.data();
+        }
         DISPATCH();
     }
 
     CASE_OP(Call) {
         dispatch_call(cur_inst->func_ref(ins->imm.u32));
+        DISPATCH();
+    }
+
+    CASE_OP(CallLocal) {
+        if (fp + 1 >= fp_end) {
+            throw Trap("call stack overflow");
+        }
+        fp->pc = pc;
+        const CompiledFunc* callee = funcs_base + ins->imm.u32;
+        size_t new_locals_base = sp - callee->paramCount;
+        uint32_t extra = callee->extraLocals;
+        if (extra != 0) {
+            if (sp + extra + 64 >= maxStack_) {
+                throw Trap("operand stack overflow");
+            }
+            for (size_t k = callee->paramCount; k < callee->locals.size(); ++k) {
+                stack_base[sp++] = Value::zero(callee->locals[k]);
+            }
+        } else if (sp + 64 >= maxStack_) {
+            throw Trap("operand stack overflow");
+        }
+        func = callee;
+        code_base = callee->code.data();
+        pc = code_base;
+        locals_base = new_locals_base;
+        locals = stack_base + locals_base;
+        ++fp;
+        *fp = CallFrame{cur_inst, func, pc, locals_base, sp};
         DISPATCH();
     }
 
@@ -585,12 +641,28 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         stack_base[sp++] = locals[ins->imm.u32];
         DISPATCH();
 
+    CASE_OP(LocalGetPrim) {
+        const Value& src = locals[ins->imm.u32];
+        stack_base[sp].type = src.type;
+        stack_base[sp].i64 = src.i64;
+        ++sp;
+        DISPATCH();
+    }
+
     CASE_OP(LocalSet)
         locals[ins->imm.u32] = stack_base[--sp];
         DISPATCH();
 
+    CASE_OP(LocalSetPrim)
+        locals[ins->imm.u32].i64 = stack_base[--sp].i64;
+        DISPATCH();
+
     CASE_OP(LocalTee)
         locals[ins->imm.u32] = stack_base[sp - 1];
+        DISPATCH();
+
+    CASE_OP(LocalTeePrim)
+        locals[ins->imm.u32].i64 = stack_base[sp - 1].i64;
         DISPATCH();
 
     CASE_OP(GlobalGet)
@@ -1318,6 +1390,69 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         DISPATCH();
     CASE_OP(I64Extend32S)
         set_i64(sp - 1, static_cast<int64_t>(static_cast<int32_t>(stack_base[sp - 1].i64)));
+        DISPATCH();
+
+    // --- Superinstructions ---
+
+    CASE_OP(LocalIncI32)
+        locals[ins->aux].i32 = static_cast<int32_t>(
+            static_cast<uint32_t>(locals[ins->aux].i32) + static_cast<uint32_t>(ins->imm.i32));
+        DISPATCH();
+
+    CASE_OP(LocalGetAddI32C)
+        set_i32(sp++, static_cast<int32_t>(
+            static_cast<uint32_t>(locals[ins->aux].i32) + static_cast<uint32_t>(ins->imm.i32)));
+        DISPATCH();
+
+    CASE_OP(LocalGetSubI32C)
+        set_i32(sp++, static_cast<int32_t>(
+            static_cast<uint32_t>(locals[ins->aux].i32) - static_cast<uint32_t>(ins->imm.i32)));
+        DISPATCH();
+
+    CASE_OP(BrIfLocalGeI32C)
+        if (locals[ins->aux].i32 >= ins->imm.i32) {
+            pc = code_base + ins->aux2;
+        }
+        DISPATCH();
+
+    CASE_OP(BrIfLocalGeS)
+        if (locals[ins->aux].i32 >= locals[ins->aux2].i32) {
+            pc = code_base + ins->imm.u32;
+        }
+        DISPATCH();
+
+    CASE_OP(BrIfLocalGeU)
+        if (static_cast<uint32_t>(locals[ins->aux].i32) >= static_cast<uint32_t>(locals[ins->aux2].i32)) {
+            pc = code_base + ins->imm.u32;
+        }
+        DISPATCH();
+
+    CASE_OP(LocalMemReadI32)
+        set_i32(sp++, fat_read<int32_t>(locals[ins->aux].handle, static_cast<uint32_t>(locals[ins->imm.u32].i32)));
+        DISPATCH();
+
+    CASE_OP(LocalMemReadU8)
+        set_i32(sp++, static_cast<int32_t>(fat_read<uint8_t>(locals[ins->aux].handle, static_cast<uint32_t>(locals[ins->imm.u32].i32))));
+        DISPATCH();
+
+    CASE_OP(I32AddC)
+        stack_base[sp - 1].i32 = static_cast<int32_t>(
+            static_cast<uint32_t>(stack_base[sp - 1].i32) + static_cast<uint32_t>(ins->imm.i32));
+        DISPATCH();
+
+    CASE_OP(I32SubC)
+        stack_base[sp - 1].i32 = static_cast<int32_t>(
+            static_cast<uint32_t>(stack_base[sp - 1].i32) - static_cast<uint32_t>(ins->imm.i32));
+        DISPATCH();
+
+    CASE_OP(I32MulC)
+        stack_base[sp - 1].i32 = static_cast<int32_t>(
+            static_cast<uint32_t>(stack_base[sp - 1].i32) * static_cast<uint32_t>(ins->imm.i32));
+        DISPATCH();
+
+    CASE_OP(I32ShrUC)
+        stack_base[sp - 1].i32 = static_cast<int32_t>(
+            static_cast<uint32_t>(stack_base[sp - 1].i32) >> (static_cast<uint32_t>(ins->imm.i32) & 31u));
         DISPATCH();
 
 #if defined(__GNUC__) || defined(__clang__)

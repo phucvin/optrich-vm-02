@@ -44,6 +44,7 @@ make bench
 * [Garbage Collection](docs/gc.md) — GC options and the Split Blocks (`alloc(num_bytes, num_refs)`) design.
 * [Shared Conventions](docs/shared-conventions.md) — Minimal conventions for shared UTF-8 string spans, typed slices, and polymorphic interface handles.
 * [Polymorphic Interfaces](docs/interfaces.md) — Go/Rust-style trait objects using `funcref`, read-only vtable blocks, and `call_ref`.
+* [Interpreter Optimizations & Benchmarks](docs/interpreter-optimizations.md) — `CallLocal`, primitive slot fast paths, peephole superinstructions, and before/after benchmark results.
 * [Compiling C & High-Level Languages (Optic)](docs/high-level-language.md) — Challenges of targeting `optrich-vm-02` from C and the design of **Optic** (`.opc`), the Optrich-native high-level language.
 
 ## Status

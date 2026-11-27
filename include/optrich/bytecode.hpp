@@ -20,6 +20,7 @@ enum class OpCode : uint16_t {
     BrTable,     // imm.u32 = br_table index in CompiledFunc::brTables
     Return,
     Call,        // imm.u32 = func index (in module's unified import+local space)
+    CallLocal,   // imm.u32 = localFuncIdx (fast intra-module call)
     CallIndirect,// imm.u32 = type index, aux = table index
     CallRef,     // imm.u32 = type index (pops funcref directly — zero tables!)
 
@@ -28,9 +29,12 @@ enum class OpCode : uint16_t {
     Select,
 
     // Locals & Globals
-    LocalGet,    // imm.u32 = local index
+    LocalGet,    // imm.u32 = local index (generic / handle / funcref)
+    LocalGetPrim,// imm.u32 = local index (i32/i64/f32/f64 fast path)
     LocalSet,    // imm.u32 = local index
+    LocalSetPrim,// imm.u32 = local index (i32/i64/f32/f64 fast path)
     LocalTee,    // imm.u32 = local index
+    LocalTeePrim,// imm.u32 = local index (i32/i64/f32/f64 fast path)
     GlobalGet,   // imm.u32 = global index
     GlobalSet,   // imm.u32 = global index
 
@@ -122,6 +126,20 @@ enum class OpCode : uint16_t {
     F32DemoteF64, F64PromoteF32,
     I32ReinterpretF32, I64ReinterpretF64, F32ReinterpretI32, F64ReinterpretI64,
     I32Extend8S, I32Extend16S, I64Extend8S, I64Extend16S, I64Extend32S,
+
+    // Superinstructions (produced by compiler peephole pass)
+    LocalIncI32,      // aux = localIdx, imm.i32 = delta
+    LocalGetAddI32C,  // aux = localIdx, imm.i32 = c -> pushes local + c
+    LocalGetSubI32C,  // aux = localIdx, imm.i32 = c -> pushes local - c
+    BrIfLocalGeI32C,  // aux = localIdx, aux2 = targetPc, imm.i32 = c
+    BrIfLocalGeS,     // aux = localA, aux2 = localB, imm.u32 = targetPc
+    BrIfLocalGeU,     // aux = localA, aux2 = localB, imm.u32 = targetPc
+    LocalMemReadI32,  // aux = localBuf, imm.u32 = localOff -> pushes i32
+    LocalMemReadU8,   // aux = localBuf, imm.u32 = localOff -> pushes u8 (as i32)
+    I32AddC,          // imm.i32 = c
+    I32SubC,          // imm.i32 = c
+    I32MulC,          // imm.i32 = c
+    I32ShrUC,         // imm.i32 = c
 
     // Sentinel for dispatch table sizing
     Count
@@ -236,7 +254,9 @@ struct CompiledFunc {
     std::string          name;
     FuncSignature        sig;
     std::vector<ValType> locals;    // includes params first, then declared locals
-    uint32_t             paramCount = 0;
+    uint32_t             paramCount  = 0;
+    uint32_t             extraLocals = 0; // locals.size() - paramCount
+    uint32_t             resultCount = 0; // sig.results.size()
     std::vector<Instr>   code;
     std::vector<BrTable> brTables;
 };
