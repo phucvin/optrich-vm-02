@@ -1,0 +1,53 @@
+// Example 03 — Zero-Copy Slices (`ro []u8`), `Vec<str>` Growth, and `clone` + GC Proof
+
+import host::trace_i32;
+import host::trace_str;
+import host::trace_meta;
+import host::trace_gc;
+
+fn split_byte(input: str, sep: u8) -> Vec<str> {
+    let out = Vec<str>::new(2); // small initial cap to exercise growth
+    let mut start = 0;
+
+    for i in 0..input.len {
+        if input[i] == sep {
+            out.push(input[start..i]); // zero-copy mem.span (inherits ro)
+            start = i + 1;
+        }
+    }
+    out.push(input[start..input.len]);
+    return out;
+}
+
+fn make_detached_header() -> str {
+    let huge = new [u8; 4096];
+    huge[0] = b'O';
+    huge[1] = b'P';
+    huge[2] = b'T';
+    huge[3] = b'I';
+    huge[4] = b'C';
+
+    // Slice first 5 bytes as ro, then clone to detach from 4096-byte backing buffer
+    let view = readonly(huge[0..5]);
+    return clone(view);
+}
+
+export fn main() -> i32 {
+    let parts = split_byte("alpha,beta,gamma,delta", b',');
+    trace_i32("step1.count", parts.len);
+    trace_str("step2.tok0", parts[0]);
+    trace_str("step3.tok1", parts[1]);
+    trace_str("step4.tok2", parts[2]);
+    trace_str("step5.tok3", parts[3]);
+    trace_meta("step6.tok2_meta", parts[2]);
+
+    let hdr = make_detached_header();
+    trace_str("step7.header", hdr);
+    trace_meta("step8.header_meta", hdr);
+
+    // Run GC: the 4096-byte buffer inside make_detached_header() and the old
+    // cap=2 Vec backing buffer should both be swept!
+    trace_gc("step9.gc");
+
+    return parts.len * 10 + hdr.len;
+}

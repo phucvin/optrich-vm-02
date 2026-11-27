@@ -1,4 +1,5 @@
 #include "optrich/compiler.hpp"
+#include "optrich/host_trace.hpp"
 #include "optrich/runtime.hpp"
 
 #include <fstream>
@@ -82,6 +83,7 @@ int main(int argc, char** argv) {
 
     try {
         Runtime rt(gc_threshold);
+        register_host_trace(rt, std::cout);
 
         for (const auto& [name, path] : linked_mods) {
             rt.instantiate_wat(name, read_text_file(path));

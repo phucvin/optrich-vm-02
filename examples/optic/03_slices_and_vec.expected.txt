@@ -1,0 +1,10 @@
+step1.count: 4
+step2.tok0: "alpha"
+step3.tok1: "beta"
+step4.tok2: "gamma"
+step5.tok3: "delta"
+step6.tok2_meta: ro=true bytes=5 refs=0
+step7.header: "OPTIC"
+step8.header_meta: ro=true bytes=5 refs=0
+step9.gc: live=17 swept=8
+return: 45

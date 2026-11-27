@@ -1,0 +1,92 @@
+// Example 02 — Automatic Split-Block Structs, Nullability (`T?`), `impl`, and `ro T`
+
+import host::trace_f64;
+import host::trace_str;
+import host::trace_meta;
+
+struct Entry {
+    id: i32,       // bytes[0..4)
+    score: f64,    // bytes[8..16)
+    name: str,     // refs[0]
+    left: Entry?,  // refs[1]
+    right: Entry?, // refs[2]
+}
+
+impl Entry {
+    fn new(id: i32, score: f64, name: str) -> Entry {
+        return Entry {
+            id: id,
+            score: score,
+            name: name,
+            left: null,
+            right: null,
+        };
+    }
+
+    fn insert(self, node: Entry) {
+        let mut cur: Entry = self;
+        while true {
+            if node.id < cur.id {
+                if cur.left == null {
+                    cur.left = node;
+                    return;
+                }
+                cur = cur.left;
+            } else {
+                if cur.right == null {
+                    cur.right = node;
+                    return;
+                }
+                cur = cur.right;
+            }
+        }
+    }
+}
+
+fn find_score(root: ro Entry?, target_id: i32) -> f64 {
+    let mut cur = root;
+    while cur != null {
+        if target_id == cur.id {
+            return cur.score;
+        }
+        cur = if target_id < cur.id { cur.left } else { cur.right };
+    }
+    return -1.0;
+}
+
+fn find_name(root: ro Entry?, target_id: i32) -> str {
+    let mut cur = root;
+    while cur != null {
+        if target_id == cur.id {
+            return cur.name;
+        }
+        cur = if target_id < cur.id { cur.left } else { cur.right };
+    }
+    return "<not-found>";
+}
+
+export fn main() -> i32 {
+    let root = Entry::new(20, 9.5, "root");
+    root.insert(Entry::new(10, 4.25, "left"));
+    root.insert(Entry::new(30, 7.75, "right"));
+    root.insert(Entry::new(25, 8.5, "mid"));
+
+    trace_meta("step1.root_rw", root);
+
+    let ro_root: ro Entry = readonly(root);
+    trace_meta("step2.root_ro", ro_root);
+
+    let s25 = find_score(ro_root, 25);
+    trace_f64("step3.score_25", s25);
+
+    let n25 = find_name(ro_root, 25);
+    trace_str("step4.name_25", n25);
+
+    let s99 = find_score(ro_root, 99);
+    trace_f64("step5.score_99", s99);
+
+    let n99 = find_name(ro_root, 99);
+    trace_str("step6.name_99", n99);
+
+    return if s25 == 8.5 && s99 == -1.0 { 1 } else { 0 };
+}

@@ -1,0 +1,6 @@
+step1.fib10: 55
+step2.sum100: 5050
+step3.collatz27: 111
+step4.big_square: 1000000000000
+step5.avg: 50.5
+return: 5216

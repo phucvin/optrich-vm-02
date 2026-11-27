@@ -8,9 +8,9 @@ LIB_OBJS  := $(patsubst src/%.cpp,$(BUILD_DIR)/%.o,$(LIB_SRCS))
 CLI_BIN   := $(BUILD_DIR)/optrich-vm
 BENCH_BIN := $(BUILD_DIR)/bench_vm
 TEST_BINS := $(BUILD_DIR)/test_memory $(BUILD_DIR)/test_core_wasm $(BUILD_DIR)/test_mem_opcodes \
-             $(BUILD_DIR)/test_gc $(BUILD_DIR)/test_multimodule
+             $(BUILD_DIR)/test_gc $(BUILD_DIR)/test_multimodule $(BUILD_DIR)/test_optic_golden
 
-.PHONY: all test examples bench clean
+.PHONY: all test test-optic examples bench clean
 
 all: $(CLI_BIN)
 
@@ -31,6 +31,9 @@ $(BENCH_BIN): benchmarks/bench_vm.cpp $(LIB_OBJS) | $(BUILD_DIR)
 
 bench: $(BENCH_BIN)
 	$(BENCH_BIN)
+
+test-optic: $(BUILD_DIR)/test_optic_golden
+	$(BUILD_DIR)/test_optic_golden
 
 test: $(TEST_BINS)
 	@for t in $(TEST_BINS); do \

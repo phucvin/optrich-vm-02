@@ -1,0 +1,7 @@
+step1.root_rw: ro=false bytes=16 refs=3
+step2.root_ro: ro=true bytes=16 refs=3
+step3.score_25: 8.5
+step4.name_25: "mid"
+step5.score_99: -1
+step6.name_99: "<not-found>"
+return: 1
