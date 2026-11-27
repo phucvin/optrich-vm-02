@@ -68,7 +68,7 @@
     (call $trace_i32 (mem.const_str $l1) (mem.eq (local.get $p1) (local.get $p1_alias)))
     (call $trace_i32 (mem.const_str $l2) (mem.eq (local.get $p1) (local.get $p2)))
     (call $trace_i32 (mem.const_str $l3)
-      (call $Point__equals (local.get $p1) (mem.readonly (local.get $p2))))
+      (call $Point__equals (local.get $p1) (local.get $p2)))
 
     (local.set $r (mem.alloc (i32.const 8) (i32.const 1)))
     (mem.write_i32 (local.get $r) (i32.const 0) (i32.const 5))

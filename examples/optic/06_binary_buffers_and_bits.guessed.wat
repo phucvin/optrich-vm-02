@@ -151,7 +151,7 @@
     (mem.write_i32 (local.get $pkt) (i32.const 6) (i32.const 777))
     (mem.copy (local.get $pkt) (i32.const 10) (mem.const_str $s_ok) (i32.const 0) (i32.const 2))
 
-    (local.set $ro_pkt (mem.readonly (local.get $pkt)))
+    (local.set $ro_pkt (local.get $pkt))
     (local.set $magic (call $read_u16_be (local.get $ro_pkt) (i32.const 0)))
     (local.set $seq (call $read_u32_be (local.get $ro_pkt) (i32.const 2)))
     (local.set $flags (mem.read_i32 (local.get $ro_pkt) (i32.const 6)))
@@ -177,7 +177,7 @@
     (mem.write_u8 (local.get $utf8_buf) (i32.const 3) (i32.const 0x82)) ;; Euro byte 1
     (mem.write_u8 (local.get $utf8_buf) (i32.const 4) (i32.const 0xAC)) ;; Euro byte 2
     (mem.write_u8 (local.get $utf8_buf) (i32.const 5) (i32.const 33))   ;; '!'
-    (local.set $utf8_s (mem.readonly (local.get $utf8_buf)))
+    (local.set $utf8_s (local.get $utf8_buf))
     (call $trace_i32 (mem.const_str $l6) (mem.byte_len (local.get $utf8_s)))
     (call $trace_i32 (mem.const_str $l7) (call $utf8_count_codepoints (local.get $utf8_s)))
 

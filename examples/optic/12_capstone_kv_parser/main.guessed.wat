@@ -28,7 +28,7 @@
     (local.set $toks (call $tokenize (mem.const_str $s_cfg)))
     (call $trace_i32 (mem.const_str $l1) (mem.read_i32 (local.get $toks) (i32.const 0)))
 
-    (local.set $entries (call $parse_kv (mem.readonly (local.get $toks))))
+    (local.set $entries (call $parse_kv (local.get $toks)))
     (local.set $n (mem.read_i32 (local.get $entries) (i32.const 0)))
     (local.set $ebuf (mem.read_ref_ro (local.get $entries) (i32.const 0)))
     (call $trace_i32 (mem.const_str $l2) (local.get $n))

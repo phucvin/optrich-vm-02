@@ -48,8 +48,8 @@
     (local.set $c (call $Canvas__new (i32.const 6) (i32.const 3)))
     (call $Canvas__fill_rect (local.get $c) (i32.const 1) (i32.const 0) (i32.const 2) (i32.const 2) (i32.const 35))
 
-    ;; Downgrade to ro Canvas and share zero-copy with renderer
-    (local.set $ro_c (mem.readonly (local.get $c)))
+    ;; Downgrade to ro Canvas (zero-alloc static rw_handle <: ro_handle) and share with renderer
+    (local.set $ro_c (local.get $c))
     (local.set $ink1 (call $count_ink (local.get $ro_c) (i32.const 35)))
     (call $trace_i32 (mem.const_str $l1) (local.get $ink1))
     (local.set $r0 (call $render_row (mem.const_str $l2) (local.get $ro_c) (i32.const 0)))
@@ -67,7 +67,7 @@
 
     ;; 3. Second Canvas verifies module global counters
     (local.set $c2 (call $Canvas__new (i32.const 4) (i32.const 2)))
-    (local.set $ro_c2 (mem.readonly (local.get $c2)))
+    (local.set $ro_c2 (local.get $c2))
     (call $trace_i32 (mem.const_str $l7)
       (i32.mul (call $Canvas__width (local.get $ro_c2)) (call $Canvas__height (local.get $ro_c2))))
     (call $trace_i32 (mem.const_str $l8) (call $get_created_count))
@@ -79,7 +79,7 @@
     (local.set $chunk (mem.alloc (i32.const 6) (i32.const 0)))
     (local.set $n1 (call $io_read (local.get $reader) (local.get $chunk)))
     (local.set $w1 (call $io_write (mem.const_str $l11)
-                     (mem.readonly (mem.span (local.get $chunk) (i32.const 0) (local.get $n1)))))
+                     (mem.span (local.get $chunk) (i32.const 0) (local.get $n1))))
 
     (i32.add
       (i32.add (local.get $ink1) (local.get $ink2))

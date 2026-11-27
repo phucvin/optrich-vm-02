@@ -60,7 +60,7 @@ Explicit numeric conversions use `expr as Type` (e.g., `ch as i32`, `n as f64`, 
 | `Vec<T>` | `rw_handle` | Growable list (header split block + backing buffer) |
 
 **Capability Subtyping / Downgrade:**
-* `readonly(x)` converts `T` → `ro T` (or `[]T` → `ro []T`) via `mem.readonly`.
+* `readonly(x)` converts `T` → `ro T` (or `[]T` → `ro []T`). At the WAT level, because `rw_handle <: ro_handle` and `MemWriteRefRo` enforces `as_readonly` on ref-slot writes, passing `rw_handle` to `ro_handle` is a **zero-allocation static coercion**; `mem.readonly` is only needed when a runtime `kFlagReadOnly` bit is required (e.g., frozen vtables, `dyn Trait` / closure objects, or runtime `is_readonly` / host metadata checks).
 * Passing a mutable `T` where `ro T` is expected requires explicit `readonly(x)` (or compiler-inserted `mem.readonly` — *see Open Question #1*).
 * `ro T` is **shallow** on the struct handle itself unless nested reference fields are also typed `ro ...` (*see Open Question #2*).
 

@@ -130,13 +130,13 @@
     (local.set $tasks (mem.alloc (i32.const 0) (i32.const 2)))
     (mem.write_ref (local.get $tasks) (i32.const 0) (call $Task__new (i32.const 5) (i32.const 3)))
     (mem.write_ref (local.get $tasks) (i32.const 1) (call $Task__new (i32.const 4) (i32.const 10)))
-    (local.set $ts (call $total_score__Task (mem.readonly (local.get $tasks))))
+    (local.set $ts (call $total_score__Task (local.get $tasks)))
     (call $trace_i32 (mem.const_str $l8) (local.get $ts))
 
     (local.set $bonuses (mem.alloc (i32.const 0) (i32.const 2)))
     (mem.write_ref (local.get $bonuses) (i32.const 0) (call $Bonus__new (i32.const 100)))
     (mem.write_ref (local.get $bonuses) (i32.const 1) (call $Bonus__new (i32.const 25)))
-    (local.set $bs_total (call $total_score__Bonus (mem.readonly (local.get $bonuses))))
+    (local.set $bs_total (call $total_score__Bonus (local.get $bonuses)))
     (call $trace_i32 (mem.const_str $l9) (local.get $bs_total))
 
     (i32.add

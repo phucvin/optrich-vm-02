@@ -104,16 +104,16 @@
     (local.set $s2 (call $Shape__Rect (f64.const 3.0) (f64.const 5.0)))
     (local.set $s3 (call $Shape__Labelled (mem.const_str $s_hero) (call $BoxedTag__new (i32.const 42))))
 
-    (call $trace_f64 (mem.const_str $l1) (call $shape_area (mem.readonly (local.get $s1))))
-    (call $trace_f64 (mem.const_str $l2) (call $shape_area (mem.readonly (local.get $s2))))
-    (local.set $code (i32.trunc_f64_s (call $shape_area (mem.readonly (local.get $s3)))))
+    (call $trace_f64 (mem.const_str $l1) (call $shape_area (local.get $s1)))
+    (call $trace_f64 (mem.const_str $l2) (call $shape_area (local.get $s2)))
+    (local.set $code (i32.trunc_f64_s (call $shape_area (local.get $s3))))
     (call $trace_i32 (mem.const_str $l3) (local.get $code))
     (call $trace_meta (mem.const_str $l4) (local.get $s3))
 
     ;; Overwrite s3 in-place; old BoxedTag(42) is nulled out and swept!
     (call $shape_reset_to_circle (local.get $s3) (f64.const 1.0))
     ;; Live: 9 const strings + s1 + s2 + s3 = 12
-    ;; Swept: 3 temporary mem.readonly views (s1, s2, s3) + 1 BoxedTag(42) = 4
+    ;; Swept: 1 BoxedTag(42) (zero temp wrappers thanks to static rw_handle <: ro_handle!)
     (call $trace_gc (mem.const_str $l5))
 
     ;; Unboxed Option<i32> (None)

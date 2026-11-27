@@ -33,7 +33,7 @@
     (mem.write_i32 (local.get $cl) (i32.const 4) (i32.const 1))
     (mem.write_ref (local.get $cl) (i32.const 0) (global.get $affine_vt))
 
-    (local.set $res (call $map_sum (mem.readonly (local.get $nums)) (mem.readonly (local.get $cl))))
+    (local.set $res (call $map_sum (local.get $nums) (local.get $cl)))
     (call $trace_i32 (mem.const_str $l1) (local.get $res))
     (local.get $res))
 )
