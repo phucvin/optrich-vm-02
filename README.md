@@ -21,6 +21,9 @@ make
 # Build and run all unit & integration test suites
 make test
 
+# Build and run the interpreter benchmark suite (includes fib(40))
+make bench
+
 # Run an example WAT module
 ./build/optrich-vm examples/span_demo.wat main
 ```
