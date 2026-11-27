@@ -123,6 +123,40 @@ By default, nested struct fields (e.g., `origin: Point` inside `Rect`) are store
 * **Handle identity (`===`):** Each `mem.sub_block` call allocates a fresh span `HandleId`, so two views of the same inline field will not compare equal under `mem.eq`. Inline structs should disallow `===` (or compare structurally).
 * **Nullability & copying:** Inline fields are non-null by construction; assigning an inline struct copies its bytes (`mem.copy`) and refs (`mem.copy_refs`) into the destination range.
 
+### 3.2 Planned Extension: `value struct` Semantics & Lowering Options
+
+In Optic v0.1, all `struct` types are heap-allocated reference types (`rw_handle` / `ro_handle`). A future `value struct` declaration (for small, data-oriented aggregates like `Point`, `Vec2`, `Color`, `Range`, or `Token`) would provide **value semantics**:
+
+* **Copy-by-value:** Assignment (`let b = a;`) and pass-by-value copy fields rather than aliasing a handle.
+* **No handle identity (`===`) & non-nullable:** No `null` directly (use `Option<T>`), structural equality (`==`), and non-recursive (finite size).
+* **May contain reference fields:** e.g., `value struct Token { start: i32, len: i32, text: str }` copies `text` by handle reference while the struct itself stays unboxed/inlined.
+
+#### Lowering Options Considered for `optrich-vm-02`
+
+1. **Scalarization + Inlining (Best for small value structs):**
+   * Locals → separate Wasm locals (`(local $p_x i32) (local $p_y i32)`), zero heap allocation.
+   * Params / returns → exploded parameters + multi-value returns `(result i32 i32)`.
+   * Nested fields & `[]ValueStruct` → flattened into parent split blocks (`bytes` + `refs`); `mem.sub_block` (Section 3.1) is emitted only when a handle view escapes (e.g., `dyn Trait` or cross-module handle APIs).
+   * *Tradeoff:* Parameter/local bloat for large structs (e.g., >4–6 fields), and stack locals are not addressable (`&mut p`).
+2. **Shadow Stack (Compiler-Managed Stack Split-Block):**
+   * Allocate a reusable stack split-block (e.g., global `$stack` + `$sp_bytes` / `$sp_refs`). Entering a function bumps `$sp_*`; exiting decrements them and zeroes popped `refs` slots for precise GC.
+   * *Tradeoff:* Handles large and address-taken (`&mut p`) value structs with zero GC allocations, at the cost of `$sp` management, ref-slot zeroing on all exit paths, and escape checks.
+3. **Immutable Reference-Backed Value Types (`ro_handle`):**
+   * Represent `value struct`s as immutable heap split blocks (`ro_handle`). Aliasing is unobservable, so passing/assignment is $O(1)$ and ABI matches normal structs; updates construct a new block.
+   * *Tradeoff:* Simplest compiler, but still heap-allocates and chases pointers unless paired with a later scalar-replacement pass.
+4. **Mutable Copy-on-Assign Handles (`mem.clone_span`):**
+   * Uniform handle ABI; emit `mem.clone_span` on every assignment/pass-by-value.
+   * *Tradeoff:* Trivial to implement, but high allocation/copy overhead in hot loops.
+5. **VM-Level Scoped Arenas (`arena.enter` / `arena.alloc` / `arena.leave`):**
+   * Fast $O(1)$ bump-allocated scope in `MemoryStore` freed on scope exit without GC (see [docs/gc.md](gc.md)).
+   * *Tradeoff:* Uniform handle ABI and low GC pressure, but requires escape safety or `mem.clone_span` promotion.
+6. **Hybrid Threshold *(Recommended Long-Term)*:**
+   * **Small `value struct`s** (e.g., ≤ 4 fields) → **scalarized** into Wasm locals / multi-value returns.
+   * **Large or address-taken `value struct`s** → **shadow stack** (or passed via `(handle, b_off, r_off)` / `mem.sub_block`).
+   * **Nested fields & arrays** → **flattened** into split blocks with `mem.sub_block` on escape.
+
+*(Note: Variable-sized inline structs inside `optrich::Value` on the VM operand stack are intentionally avoided, as `Value` relies on fixed-size tagged slots for fast interpreter dispatch and simple precise GC root scanning.)*
+
 ---
 
 ## 4. Statements & Control Flow Lowering
