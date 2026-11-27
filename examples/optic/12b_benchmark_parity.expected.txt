@@ -1,0 +1,3 @@
+step1.primes_le_1000: 168
+step2.array_sum_1000: 499500
+return: 499668

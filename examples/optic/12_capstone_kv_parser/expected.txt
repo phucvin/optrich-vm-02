@@ -1,0 +1,9 @@
+step1.tok_count: 12
+step2.entry_count: 3
+step3.key0: "width"
+step4.val0: 640
+step5.key1: "height"
+step6.key1_meta: ro=true bytes=6 refs=0
+step7.key2: "fps"
+step8.sum_values: 1180
+return: 1180

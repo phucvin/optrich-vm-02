@@ -1,0 +1,29 @@
+// Example 12 (Module 3/3) — `main`: end-to-end zero-copy lexer -> parser pipeline
+
+import host::trace_i32;
+import host::trace_str;
+import host::trace_meta;
+import lexer::tokenize;
+import parser::parse_kv;
+
+export fn main() -> i32 {
+    let config = "width=640; height=480; fps=60;";
+    let toks = tokenize(config);
+    trace_i32("step1.tok_count", toks.len);
+
+    let entries = parse_kv(readonly(toks));
+    trace_i32("step2.entry_count", entries.len);
+
+    trace_str("step3.key0", entries[0].key);
+    trace_i32("step4.val0", entries[0].value);
+    trace_str("step5.key1", entries[1].key);
+    trace_meta("step6.key1_meta", entries[1].key);
+    trace_str("step7.key2", entries[2].key);
+
+    let mut total = 0;
+    for i in 0..entries.len {
+        total += entries[i].value;
+    }
+    trace_i32("step8.sum_values", total);
+    return total;
+}

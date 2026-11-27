@@ -1,0 +1,3 @@
+lexer=lexer.guessed.wat
+parser=parser.guessed.wat
+main=main.guessed.wat

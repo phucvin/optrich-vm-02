@@ -1,0 +1,28 @@
+// Example 12 (Module 2/3) — `parser`: parses `IDENT = NUM;` pairs from zero-copy tokens
+
+struct KvEntry {
+    value: i32, // bytes[0..4)
+    key: str,   // refs[0] (zero-copy span from original input!)
+}
+
+fn parse_u32(s: str) -> i32 {
+    let mut acc = 0;
+    for i in 0..s.len {
+        acc = acc * 10 + (s[i] - b'0') as i32;
+    }
+    return acc;
+}
+
+export fn parse_kv(toks: ro Vec<Token>) -> Vec<KvEntry> {
+    let entries = Vec<KvEntry>::new(4);
+    let mut i = 0;
+    let n = toks.len;
+    while i + 3 < n {
+        // Expect: IDENT(0), EQ(2), NUM(1), SEMI(3)
+        let key_tok = toks[i];
+        let val_tok = toks[i + 2];
+        entries.push(KvEntry { value: parse_u32(val_tok.text), key: key_tok.text });
+        i += 4;
+    }
+    return entries;
+}

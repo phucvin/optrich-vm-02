@@ -1,6 +1,6 @@
-# Optic (`.opc`) Language Specification — v0.1 (Draft)
+# Optic (`.opc`) Language Specification — v0.2
 
-**Status:** Working draft (Iteration 1). Evolved alongside runnable `.opc` / `.guessed.wat` / `.expected.txt` golden tests in `examples/optic/`.
+**Status:** Iterations 1–12 golden-test design suite complete (`examples/optic/`, 24 verified golden tests + 4 static negative specs). Ready for Optic compiler implementation.
 
 Optic is a small, statically typed, capability-safe language designed to lower **1:1 with zero impedance mismatch** to Optrich VM 02's split-block memory model (`rw_handle` / `ro_handle`, zero-copy `mem.span`, `mem.readonly`, `mem.clone_span`, precise GC, and `call_ref` vtables).
 
