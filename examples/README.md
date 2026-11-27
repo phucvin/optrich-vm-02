@@ -13,7 +13,7 @@ Build the CLI first with `make`, or run all examples at once with `make examples
 | [`06_polymorphic_interfaces/`](06_polymorphic_interfaces/) | 4 | Stateless `shape.wat` interface + boxed Go-style trait objects (`ro_handle` `[data, vtable]`), multi-signature `call_ref` (`area`, `scale`) | `316` + `[gc] ...` |
 | [`07_zero_copy_split.wat`](07_zero_copy_split.wat) | 2 | Zero-copy CSV string tokenizer (`mem.span`, `mem.ref_span`, `mem.cmp`) | `361` |
 | [`08_closure.wat`](08_closure.wat) | 4 | Simple closure (`make_adder`) with captured `bytes` env + 1-method vtable + `call_ref` | `120` |
-| [`09_rust_trait_dispatch.wat`](09_rust_trait_dispatch.wat) | 4 | Rust-style unboxed `&dyn Trait` fat-pointer dispatch `(data, vtable)` (zero wrapper allocation!) | `144` + `[gc] ...` |
+| [`09_rust_trait_dispatch.wat`](09_rust_trait_dispatch.wat) | 4 | Rust-style static trait dispatch (monomorphized direct `call`, zero vtables, only 2 data allocations!) | `144` + `[gc] ...` |
 
 ## Running Individually
 
