@@ -14,7 +14,7 @@ export fn main() -> i32 {
     let affine = |x: i32| -> i32 { return x * scale + bias; };
 
     // (2*3+1) + (4*3+1) + (6*3+1) = 7 + 13 + 19 = 39
-    let res = map_sum(readonly(nums), affine);
+    let res = map_sum(nums, affine);
     trace_i32("step1.cross_mod_map_sum", res);
     return res;
 }

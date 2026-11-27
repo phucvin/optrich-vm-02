@@ -60,8 +60,8 @@ Explicit numeric conversions use `expr as Type` (e.g., `ch as i32`, `n as f64`, 
 | `Vec<T>` | `rw_handle` | Growable list (header split block + backing buffer) |
 
 **Capability Subtyping / Downgrade:**
-* `readonly(x)` converts `T` → `ro T` (or `[]T` → `ro []T`). At the WAT level, because `rw_handle <: ro_handle` and `MemWriteRefRo` enforces `as_readonly` on ref-slot writes, passing `rw_handle` to `ro_handle` is a **zero-allocation static coercion**; `mem.readonly` is only needed when a runtime `kFlagReadOnly` bit is required (e.g., frozen vtables, `dyn Trait` / closure objects, or runtime `is_readonly` / host metadata checks).
-* Passing a mutable `T` where `ro T` is expected requires explicit `readonly(x)` (or compiler-inserted `mem.readonly` — *see Open Question #1*).
+* `T <: ro T` (and `[]T <: ro []T`) is **implicit and zero-allocation** — mutable handles can be passed directly where `ro T` / `ro []T` is expected, or bound via a type annotation (`let view: ro T = x;`). No `readonly(...)` operator is needed in Optic.
+* At the WAT level, `rw_handle <: ro_handle` handles this with zero allocation; `MemWriteRefRo` automatically enforces `as_readonly` when storing a `ro_handle` into a ref slot, and the compiler emits `mem.readonly` internally when freezing vtables, `dyn Trait` / closure objects, or runtime-flagged `ro` views.
 * `ro T` is **shallow** on the struct handle itself unless nested reference fields are also typed `ro ...` (*see Open Question #2*).
 
 ---
@@ -207,7 +207,6 @@ Lowers to Wasm `(if (result T) <cond> (then ...) (else ...))` for expressions, o
 * `s.len` → `(mem.byte_len s)` (for `u8`/`bool`), or `(i32.div_u (mem.byte_len s) (i32.const sizeof(T)))` (or `i32.shr_u` by shift) for `i32`/`i64`/`f32`/`f64`.
 * `s[i]` → `(mem.read_<T> s (i32.mul i (i32.const sizeof(T))))` (shift for power-of-2 sizes).
 * `s[start..end]` → `(mem.span s (i32.mul start sizeof(T)) (i32.mul (i32.sub end start) sizeof(T)))` — **O(1) zero-copy**, inherits `ro`/`rw`.
-* `readonly(s)` → `(mem.readonly s)`.
 * `clone(s)` → `(mem.clone_span s)` — detaches slice into a fresh owning block so the original large backing buffer can be GC'd.
 
 ### 5.2 Reference Slices (`[]MyStruct`, `[]str`, `ro []str`)
@@ -284,7 +283,7 @@ Generic structs (`struct Box<T>`, `struct Pair<A, B>`) and generic functions (`f
 
 * **Cross-module `import` / `export`:**
   * Functions marked `export fn` lower to `(func (export "name") ...)`; `import mod::func;` lowers to `(import "mod" "func" (func $func ...))`.
-  * Library objects marked `export struct Name { ... }` (with private/encapsulated fields by default) and `export impl Name { ... }` export their methods as `Name__method` (`rw_handle` for `self`, `ro_handle` for `self: ro Self`). Importing `import mod::Name;` lets callers construct and invoke methods directly across module boundaries via static `call` with zero vtable overhead, while `readonly(obj)` restricts other modules to `ro` methods only.
+  * Library objects marked `export struct Name { ... }` (with private/encapsulated fields by default) and `export impl Name { ... }` export their methods as `Name__method` (`rw_handle` for `self`, `ro_handle` for `self: ro Self`). Importing `import mod::Name;` lets callers construct and invoke methods directly across module boundaries via static `call` with zero vtable overhead, while passing `obj` as `ro Name` restricts other modules to `ro` methods only.
   * Handles (`rw_handle`, `ro_handle`, `handle`) cross module boundaries directly with zero copying because all modules share one `MemoryStore` and one precise GC.
 * **Module `const` and `static mut` globals:**
   * `const X: i32 = 42;` lowers to an immutable Wasm `(global $X i32 (i32.const 42))` (or inline constant).
@@ -320,7 +319,7 @@ Generic structs (`struct Box<T>`, `struct Pair<A, B>`) and generic functions (`f
 
 ## 12. Open Design Questions (To Resolve Across Iterations)
 
-1. **Implicit vs. explicit `readonly(...)`:** Should passing `[]u8` to a `ro []u8` parameter require explicit `readonly(buf)` or auto-insert `mem.readonly`? (Explicit makes the capability downgrade visible; implicit is more ergonomic.)
+1. ~~**Implicit vs. explicit `readonly(...)`:**~~ **Resolved:** Removed `readonly(...)` from Optic; `T <: ro T` (and `[]T <: ro []T`) is implicit and lowers zero-allocation via VM `rw_handle <: ro_handle` subtyping.
 2. **Shallow vs. transitive `ro T`:** If `e: ro Entry` has a mutable child field `child: Node`, should `e.child` be `ro Node` (transitive) or `Node` (shallow)?
 3. ~~**WAT `mem.read_ref` return type:**~~ **Resolved:** Removed dynamic `handle` from Optrich VM 02 (keeping only `rw_handle` and `ro_handle` with `rw_handle <: ro_handle`), split `mem.read_ref` into `mem.read_ref_rw` (runtime-checked `rw_handle`) and `mem.read_ref_ro` (`ro_handle`), and enforced `as_readonly` when writing a `ro_handle` via `mem.write_ref`.
 4. ~~**VM `mem.copy_refs` opcode:**~~ **Resolved:** Added `mem.copy_refs(dst, dst_off, src, src_off, count)` and made `mem.readonly` a zero-allocation no-op on already-`ro` handles (eliminating redundant wrapper blocks on `mem.readonly(mem.read_ref(...))`).

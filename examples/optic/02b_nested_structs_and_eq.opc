@@ -46,7 +46,7 @@ export fn main() -> i32 {
     // Handle identity (mem.eq) vs structural equality
     trace_i32("step1.same_id", (p1 === p1_alias) as i32);
     trace_i32("step2.diff_id", (p1 === p2) as i32);
-    trace_i32("step3.val_eq", p1.equals(readonly(p2)) as i32);
+    trace_i32("step3.val_eq", p1.equals(p2) as i32);
 
     // Nested struct
     let r = Rect { w: 5, h: 4, origin: p1 };
@@ -60,7 +60,7 @@ export fn main() -> i32 {
     pts[1] = Point::new(10, 0);
     pts[2] = Point::new(100, 0);
 
-    let tail: ro []Point = readonly(pts[1..3]);
+    let tail: ro []Point = pts[1..3];
     trace_meta("step7.tail_meta", tail);
     let sx = sum_x(tail);
     trace_i32("step8.tail_sum_x", sx);

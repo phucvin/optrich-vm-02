@@ -49,9 +49,9 @@ export fn main() -> i32 {
     let s2 = Shape::Rect(3.0, 5.0);
     let s3 = Shape::Labelled("hero", BoxedTag { code: 42 });
 
-    trace_f64("step1.circle_area", shape_area(readonly(s1)));
-    trace_f64("step2.rect_area", shape_area(readonly(s2)));
-    let code = shape_area(readonly(s3)) as i32;
+    trace_f64("step1.circle_area", shape_area(s1));
+    trace_f64("step2.rect_area", shape_area(s2));
+    let code = shape_area(s3) as i32;
     trace_i32("step3.labelled_code", code);
     trace_meta("step4.s3_meta", s3);
 

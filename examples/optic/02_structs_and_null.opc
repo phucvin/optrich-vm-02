@@ -73,7 +73,7 @@ export fn main() -> i32 {
 
     trace_meta("step1.root_rw", root);
 
-    let ro_root: ro Entry = readonly(root);
+    let ro_root: ro Entry = root;
     trace_meta("step2.root_ro", ro_root);
 
     let s25 = find_score(ro_root, 25);

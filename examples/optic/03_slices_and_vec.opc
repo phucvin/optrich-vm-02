@@ -28,7 +28,7 @@ fn make_detached_header() -> str {
     huge[4] = b'C';
 
     // Slice first 5 bytes as ro, then clone to detach from 4096-byte backing buffer
-    let view = readonly(huge[0..5]);
+    let view: ro []u8 = huge[0..5];
     return clone(view);
 }
 

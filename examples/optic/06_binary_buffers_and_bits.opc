@@ -64,7 +64,7 @@ impl ByteBuf {
     }
 
     fn as_str(self: ro ByteBuf) -> str {
-        return readonly(self.data[0..self.len]);
+        return self.data[0..self.len];
     }
 }
 
@@ -95,7 +95,7 @@ export fn main() -> i32 {
     pkt.write_i32_le(6, 777);
     mem_copy(pkt, 10, "OK", 0, 2);
 
-    let ro_pkt = readonly(pkt);
+    let ro_pkt: ro []u8 = pkt;
     let magic = read_u16_be(ro_pkt, 0) as i32;
     let seq   = read_u32_be(ro_pkt, 2) as i32;
     let flags = ro_pkt.read_i32_le(6);

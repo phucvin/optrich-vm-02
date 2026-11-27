@@ -39,7 +39,7 @@ export fn main() -> i32 {
     trace_i32("step4.aliased_y", s.pos.y);
 
     // Passing ro Sprite's inline field preserves read-only capability
-    let ro_s = readonly(s);
+    let ro_s: ro Sprite = s;
     let ro_p = ro_s.pos; // mem.sub_block on ro_handle -> ro_handle!
     trace_meta("step5.ro_sub_meta", ro_p);
     trace_str("step6.ro_sub_label", ro_p.label);

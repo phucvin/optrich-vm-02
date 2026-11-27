@@ -17,7 +17,7 @@ export fn main() -> i32 {
     c.fill_rect(1, 0, 2, 2, b'#');
 
     // Downgrade to `ro Canvas` and share zero-copy with `renderer` (which can only call `ro` methods)
-    let ro_c: ro Canvas = readonly(c);
+    let ro_c: ro Canvas = c;
     let ink1 = count_ink(ro_c, b'#'); // 4
     trace_i32("step1.ink_before_mut", ink1);
     let r0 = render_row("step2.row0_before", ro_c, 0); // ".##..."
@@ -35,8 +35,7 @@ export fn main() -> i32 {
 
     // 3. Second Canvas verifies module global counters across `canvas` and `renderer`
     let c2 = Canvas::new(4, 2);
-    let ro_c2: ro Canvas = readonly(c2);
-    trace_i32("step7.c2_area", ro_c2.width() * ro_c2.height());
+    trace_i32("step7.c2_area", c2.width() * c2.height());
     trace_i32("step8.canvases_created", get_created_count());
     trace_i32("step9.renderer_inspects", get_inspect_count());
 
@@ -45,7 +44,7 @@ export fn main() -> i32 {
     trace_meta("step10.reader_meta", reader);
     let chunk = new [u8; 6];
     let n1 = io_read(reader, chunk); // "Optic-" (6 bytes)
-    let w1 = io_write("step11.io_chunk1", readonly(chunk[0..n1]));
+    let w1 = io_write("step11.io_chunk1", chunk[0..n1]);
 
     return ink1 + ink2 + r0 + r1 + r2 + w1;
 }

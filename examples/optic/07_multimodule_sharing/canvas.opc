@@ -55,7 +55,7 @@ export impl Canvas {
 
     fn row(self: ro Self, y: i32) -> ro []u8 {
         let start = y * self.width;
-        return readonly(self.pixels[start..start + self.width]);
+        return self.pixels[start..start + self.width];
     }
 }
 

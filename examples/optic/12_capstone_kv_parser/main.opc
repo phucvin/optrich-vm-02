@@ -11,7 +11,7 @@ export fn main() -> i32 {
     let toks = tokenize(config);
     trace_i32("step1.tok_count", toks.len);
 
-    let entries = parse_kv(readonly(toks));
+    let entries = parse_kv(toks);
     trace_i32("step2.entry_count", entries.len);
 
     trace_str("step3.key0", entries[0].key);

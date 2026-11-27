@@ -80,13 +80,13 @@ export fn main() -> i32 {
     let tasks = new [Task; 2];
     tasks[0] = Task { points: 5, multiplier: 3 };
     tasks[1] = Task { points: 4, multiplier: 10 };
-    let ts = total_score<Task>(readonly(tasks));
+    let ts = total_score<Task>(tasks);
     trace_i32("step8.tasks_score", ts);
 
     let bonuses = new [Bonus; 2];
     bonuses[0] = Bonus { flat: 100 };
     bonuses[1] = Bonus { flat: 25 };
-    let bs_total = total_score<Bonus>(readonly(bonuses));
+    let bs_total = total_score<Bonus>(bonuses);
     trace_i32("step9.bonuses_score", bs_total);
 
     return bi.val + p1.first + ts + bs_total;
