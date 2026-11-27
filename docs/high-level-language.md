@@ -79,15 +79,41 @@ Because `optrich-vm-02` is designed for **multi-module interoperability** (Phase
 
 ---
 
-## 3. Summary & Recommended Next VM Additions
+## 3. Chosen Direction: Option 3 — Optrich-Native High-Level Language
+
+We have selected **Option 3** as the primary high-level language strategy for `optrich-vm-02`. Designing a compact language around the split-block capability model avoids the impedance mismatch of C while keeping the compiler small, predictable, and directly aligned with Optrich WAT.
+
+### Core Language-to-VM Lowering Model
+
+| Language Feature | Optrich VM 02 Lowering |
+| :--- | :--- |
+| **Primitives** (`i32`, `i64`, `f32`, `f64`, `bool`, `u8`) | Native stack/local values (`i32`, `i64`, `f32`, `f64`) |
+| **Managed `struct`s** (GC'd reference types) | Compiler partitions primitive fields into `bytes` offsets and reference fields into `refs` indices → `mem.alloc(num_bytes, num_refs)` |
+| **Typed primitive slices & strings** (`[]u8`, `[]i32`, `ro []u8`, `str`) | `rw_handle` / `ro_handle` + `mem.span`, `mem.readonly`, `mem.byte_len`, `mem.read_*` / `mem.write_*` |
+| **Reference arrays & growable lists** (`[]T`, `Vec<T>`) | `mem.alloc(0, len)` + `mem.read_ref` / `mem.write_ref`, or the header+backing indirection pattern (see `examples/ref_vec_demo.wat`) |
+| **Read-only capabilities** (`ro T`, `ro []u8`, `readonly(x)`) | Compile-time `ro_handle` type + `mem.readonly` downgrade for zero-copy cross-module sharing |
+| **Nullability** (`T?`, `null`) | `handle.null` + `mem.is_null` checks |
+| **Interfaces & function values** | Phase 4 `table` + `call_indirect` + `(handle, vtable_idx)` pairs (see [docs/shared-conventions.md](shared-conventions.md)) |
+| **Modules** (`import` / `export`) | Direct Optrich module `import`/`export` over the shared `Runtime` + `Linker` |
+
+### Key Design Principles
+1. **Automatic split-block layout:** Programmers declare ordinary structs mixing primitives and references; the compiler computes byte offsets and ref slot indices transparently.
+2. **Zero-copy slicing by default:** `buf[start..end]` lowers directly to `mem.span` (inheriting `ro`/`rw` permissions), with an explicit `clone(slice)` lowering to `mem.clone_span` when detaching from a large backing buffer.
+3. **Static read-only safety:** Passing a mutable buffer across a module boundary as `ro []u8` emits `mem.readonly` once and lets the VM compiler reject writes at compile time.
+4. **Simple direct-to-WAT compiler:** A recursive-descent frontend + type checker emitting Optrich WAT directly (no LLVM dependency required).
+
+---
+
+## 4. Summary & Recommended Next VM Additions
 
 | Goal | Best Path |
 | :--- | :--- |
 | **Run existing C code quickly** while keeping zero-copy cross-module spans | **Option 1** (`clang --target=wasm32` → Wasm-to-Optrich translator over a single `rw_handle` linear heap + boundary span intrinsics). |
 | **Compile C natively with per-object safety** | Requires revisiting Split Blocks → **Option 2c (1-bit side tags)** in [docs/gc.md](gc.md), plus a capability-aware C compiler. |
-| **Get the most out of `optrich-vm-02`'s split-block model** | **Option 3** (a small C/Zig/Rust-flavored language with GC structs and `ro`/`rw` slices), optionally paired with Option 1 for C libraries (**Option 4**). |
+| **Get the most out of `optrich-vm-02`'s split-block model** *(chosen)* | **Option 3** (a dedicated Optrich-native language with GC structs and `ro`/`rw` slices), optionally paired with Option 1 later for legacy C libraries (**Option 4**). |
 
 ### High-Leverage VM Additions for Compilers
-Whether pursuing Option 1, Option 3, or Option 4, a few targeted VM additions will pay off immediately (building on the existing Phase 4 `call_indirect` tables and multi-module `Runtime`):
+Building on the existing Phase 4 `call_indirect` tables and multi-module `Runtime`, a few targeted VM additions will pay off immediately for the high-level language compiler:
 1. **General data-segment initialization:** Extend `(string ...)` to arbitrary read-only/copyable byte blobs so static arrays and lookup tables do not have to be emitted as long sequences of `mem.write_*` instructions.
-2. **Paired byte+ref spans (optional):** If a high-level language wants zero-copy slices over arrays of mixed `(bytes + refs)` structs, consider a combined span or struct-of-arrays lowering convention.
+2. **Bulk reference copy (`mem.copy_refs`):** Mirror `mem.copy` for `refs` slots to accelerate growable `Vec<T>` reallocations.
+3. **Paired byte+ref spans (optional):** If zero-copy slices over arrays of mixed `(bytes + refs)` structs are needed, consider a combined span or struct-of-arrays lowering convention.
