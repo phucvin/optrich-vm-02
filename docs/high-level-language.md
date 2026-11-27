@@ -217,5 +217,5 @@ export fn hash_all(h: dyn Hasher, chunks: ro []ro []u8) -> i32 {
 ### High-Leverage VM Additions for Compilers
 Building on the existing Phase 4 `call_indirect` tables and multi-module `Runtime`, a few targeted VM additions will pay off immediately for the high-level language compiler:
 1. **General data-segment initialization:** Extend `(string ...)` to arbitrary read-only/copyable byte blobs so static arrays and lookup tables do not have to be emitted as long sequences of `mem.write_*` instructions.
-2. **Bulk reference copy (`mem.copy_refs`):** Mirror `mem.copy` for `refs` slots to accelerate growable `Vec<T>` reallocations.
-3. **Paired byte+ref spans (optional):** If zero-copy slices over arrays of mixed `(bytes + refs)` structs are needed, consider a combined span or struct-of-arrays lowering convention.
+2. ~~**Bulk reference copy (`mem.copy_refs`):**~~ **Implemented** — mirrors `mem.copy` for `refs` slots to accelerate growable `Vec<T>` reallocations.
+3. **Combined byte+ref sub-block spans (`mem.sub_block`):** Enables inlined nested structs (including mixed `bytes + refs` structs) and flat arrays of structs while still allowing zero-copy handle views via `MemoryBlock`'s existing `(byteOffset/byteSize, refOffset/refCount)` fields (see [docs/optic-spec.md](optic-spec.md#31-planned-extension-inline-nested-structs--memsub_block)).

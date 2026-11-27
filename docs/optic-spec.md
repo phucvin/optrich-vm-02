@@ -88,6 +88,41 @@ struct Entry {
 **Important VM Note on `mem.read_ref`:**
 `mem.read_ref` returns dynamic `handle` in Optrich WAT (the VM does not know statically whether a ref slot held `rw_handle` or `ro_handle`). Therefore, in WAT lowering, locals/expressions receiving a `mem.read_ref` result use `handle` when needed, or `ro_handle` after `mem.readonly` if the field is `ro`. *(See Open Question #3 — we may want typed ref reads or `handle` locals for struct fields.)*
 
+### 3.1 Planned Extension: Inline Nested Structs & `mem.sub_block`
+
+By default, nested struct fields (e.g., `origin: Point` inside `Rect`) are stored as separate heap allocations referenced via a `refs` slot. To eliminate extra allocations, GC objects, and pointer chasing for small or embedded structs, Optic can support **inlined nested structs** (e.g., `value struct` or an `inline` field modifier) backed by a minimal VM extension: **`mem.sub_block`**.
+
+#### 1. VM Addition: `mem.sub_block`
+`MemoryBlock` in `include/optrich/memory_store.hpp` already carries both byte and ref view ranges (`rootHandle`, `byteOffset`, `byteSize`, `refOffset`, `refCount`, `readOnly`), and `as_readonly`, `clone_span`, `read_ref`/`write_ref`, `copy_refs`, and `collect_garbage` already handle blocks with both regions active. Only a combined constructor is needed:
+
+* **WAT / Bytecode opcode:** `(mem.sub_block h byte_off byte_len ref_off ref_len) -> handle`
+  * Static return type: preserves `rw_handle` / `ro_handle` / `handle` from `h` (same as `mem.span`).
+* **`MemoryStore::make_sub_block(HandleId h, uint32_t byte_off, uint32_t byte_len, uint32_t ref_off, uint32_t ref_len)`:**
+  1. Bounds-check `byte_off + byte_len <= src.byteSize` and `ref_off + ref_len <= src.refCount` (trap on OOB).
+  2. Resolve `root = (src.rootHandle != kNullHandle) ? src.rootHandle : h`.
+  3. Allocate a span slot with:
+     * `rootHandle = root`
+     * `byteOffset = src.byteOffset + byte_off`, `byteSize = byte_len`
+     * `refOffset  = src.refOffset + ref_off`, `refCount = ref_len`
+     * `readOnly   = src.readOnly`
+  4. Return `to_fat_handle(id)`.
+
+#### 2. Compiler Lowering Rules
+* **Flattened layout:** An inline nested struct `Inner` with `(inner_bytes, inner_refs)` is laid out directly inside `Outer`'s split block at static `(base_byte_off, base_ref_off)` (respecting natural alignment for `bytes`).
+  * Example: `Rect { w: i32, h: i32, origin: inline Point }` → `mem.alloc(16, 0)` with `w` at `bytes[0..4)`, `h` at `bytes[4..8)`, `origin.x` at `bytes[8..12)`, `origin.y` at `bytes[12..16)`.
+* **Direct field access (zero overhead):** `r.origin.x` compiles directly to `(mem.read_i32 $r (i32.const 8))` (and nested ref fields to `(mem.read_ref $r (i32.const base_ref_off + field_idx))`) — **no `mem.sub_block` is allocated**.
+* **Passing / escaping as a handle:** When `r.origin` is passed to a function, method, `dyn Trait`, or cross-module call expecting a `Point` / `ro Point` handle, emit:
+  ```wat
+  (mem.sub_block (local.get $r) (i32.const 8) (i32.const 8) (i32.const 0) (i32.const 0))
+  ```
+  *(For pure-byte structs with `inner_refs == 0`, `mem.span` is equivalent; `mem.sub_block` handles both pure-byte and mixed `bytes + refs` structs uniformly.)*
+* **Flat arrays of inline structs (bonus):** `[]InlineStruct` can be allocated as a single flat block `mem.alloc(N * b_stride, N * r_stride)`. Direct element field access (`arr[i].field`) uses `i * b_stride + field_off` / `i * r_stride + ref_idx`; taking a handle to `arr[i]` uses `mem.sub_block`, and `clone(arr[i])` detaches via `mem.clone_span`.
+
+#### 3. Semantic Notes & Caveats
+* **GC retention:** Like `mem.span`, a `mem.sub_block` view pins `rootHandle` alive until dropped or detached with `mem.clone_span`.
+* **Handle identity (`===`):** Each `mem.sub_block` call allocates a fresh span `HandleId`, so two views of the same inline field will not compare equal under `mem.eq`. Inline structs should disallow `===` (or compare structurally).
+* **Nullability & copying:** Inline fields are non-null by construction; assigning an inline struct copies its bytes (`mem.copy`) and refs (`mem.copy_refs`) into the destination range.
+
 ---
 
 ## 4. Statements & Control Flow Lowering
