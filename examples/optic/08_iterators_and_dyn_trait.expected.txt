@@ -1,0 +1,6 @@
+step1.iter_count: 4
+step2.iter_sum: 26
+step3.dyn_obj_meta: ro=true bytes=0 refs=2
+step4.area_before: 37
+step5.area_after: 148
+return: 174

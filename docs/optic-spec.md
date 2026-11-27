@@ -291,7 +291,20 @@ Generic structs (`struct Box<T>`, `struct Pair<A, B>`) and generic functions (`f
 
 ---
 
-## 10. Open Design Questions (To Resolve Across Iterations)
+## 10. Traits, Iterators & `dyn Trait` Dynamic Dispatch
+
+* **Static trait dispatch:** Generic bounds (`<T: Trait>`) monomorphize to direct `call $Struct__method` (zero vtable overhead).
+* **Zero-allocation iterator protocol (`for x in iter`):**
+  * Iterators implement `fn next(self) -> Option<Item>`, returning an unboxed multi-value `(is_some: i32, val: Item)` (for primitives) or nullable `handle` (for refs).
+  * `for x in iter { body }` lowers to a `loop` calling `iter.next()` with zero per-iteration heap allocation.
+* **Dynamic dispatch (`dyn Trait` via frozen vtables + `call_ref`):**
+  * Each `impl Trait for Struct` caches one frozen vtable block (`mem.alloc_vtable(M)` + `mem.write_func` + `mem.readonly`) in a module global.
+  * A `dyn Trait` value is a frozen 2-ref split block `mem.alloc(0, 2)` (`refs[0]` = concrete data handle, `refs[1]` = frozen vtable handle).
+  * Method calls dispatch via `(call_ref (type $sig) (mem.read_ref $obj 0) <args...> (mem.read_func (mem.read_ref $obj 1) <slot>))`. Because `FuncRef` binds its defining `ModuleInstance*`, `dyn Trait` works identically within a module and across modules with zero indirect tables.
+
+---
+
+## 11. Open Design Questions (To Resolve Across Iterations)
 
 1. **Implicit vs. explicit `readonly(...)`:** Should passing `[]u8` to a `ro []u8` parameter require explicit `readonly(buf)` or auto-insert `mem.readonly`? (Explicit makes the capability downgrade visible; implicit is more ergonomic.)
 2. **Shallow vs. transitive `ro T`:** If `e: ro Entry` has a mutable child field `child: Node`, should `e.child` be `ro Node` (transitive) or `Node` (shallow)?

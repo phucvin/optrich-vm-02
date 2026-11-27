@@ -1,0 +1,35 @@
+// Example 08b (Module 1/2) — `widgets`: exports `dyn Renderable` trait objects across module boundary
+
+trait Renderable {
+    fn width(self: ro Self) -> i32;
+}
+
+struct Button {
+    label_len: i32,
+    padding: i32,
+}
+
+impl Renderable for Button {
+    fn width(self: ro Button) -> i32 {
+        return self.label_len + self.padding * 2;
+    }
+}
+
+struct Slider {
+    min_val: i32,
+    max_val: i32,
+}
+
+impl Renderable for Slider {
+    fn width(self: ro Slider) -> i32 {
+        return self.max_val - self.min_val;
+    }
+}
+
+export fn make_button(label_len: i32, padding: i32) -> dyn Renderable {
+    return Button { label_len: label_len, padding: padding } as dyn Renderable;
+}
+
+export fn make_slider(min_val: i32, max_val: i32) -> dyn Renderable {
+    return Slider { min_val: min_val, max_val: max_val } as dyn Renderable;
+}

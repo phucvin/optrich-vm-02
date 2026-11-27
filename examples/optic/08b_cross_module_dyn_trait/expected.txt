@@ -1,0 +1,4 @@
+step1.button1_width: 20
+step2.slider_width: 55
+step3.button2_width: 10
+return: 85

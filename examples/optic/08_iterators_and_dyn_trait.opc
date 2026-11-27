@@ -1,0 +1,90 @@
+// Example 08 — Zero-Allocation Iterator Protocol & `dyn Trait` (`call_ref` + Frozen Vtables)
+
+import host::trace_i32;
+import host::trace_meta;
+
+// --- 1. Zero-allocation Iterator protocol ---
+struct RangeStep {
+    cur: i32,
+    end: i32,
+    step: i32,
+}
+
+impl RangeStep {
+    fn new(start: i32, end: i32, step: i32) -> RangeStep {
+        return RangeStep { cur: start, end: end, step: step };
+    }
+
+    fn next(self) -> Option<i32> {
+        if self.cur >= self.end {
+            return Option::None;
+        }
+        let v = self.cur;
+        self.cur += self.step;
+        return Option::Some(v);
+    }
+}
+
+// --- 2. Trait & dynamic dispatch (`dyn Shape`) ---
+trait Shape {
+    fn area(self: ro Self) -> i32;
+    fn scale(self, factor: i32);
+}
+
+struct Rect {
+    w: i32,
+    h: i32,
+}
+
+impl Shape for Rect {
+    fn area(self: ro Rect) -> i32 {
+        return self.w * self.h;
+    }
+    fn scale(self, factor: i32) {
+        self.w *= factor;
+        self.h *= factor;
+    }
+}
+
+struct Square {
+    side: i32,
+}
+
+impl Shape for Square {
+    fn area(self: ro Square) -> i32 {
+        return self.side * self.side;
+    }
+    fn scale(self, factor: i32) {
+        self.side *= factor;
+    }
+}
+
+export fn main() -> i32 {
+    // 1. Iterate RangeStep(2, 12, 3) -> 2, 5, 8, 11 (sum = 26, count = 4)
+    let mut iter_sum = 0;
+    let mut iter_count = 0;
+    for x in RangeStep::new(2, 12, 3) {
+        iter_sum += x;
+        iter_count += 1;
+    }
+    trace_i32("step1.iter_count", iter_count);
+    trace_i32("step2.iter_sum", iter_sum);
+
+    // 2. Heterogeneous []dyn Shape dispatched via call_ref + frozen vtables
+    let shapes = new [dyn Shape; 2];
+    shapes[0] = Rect { w: 3, h: 4 } as dyn Shape;   // area 12 -> scale(2) -> 48
+    shapes[1] = Square { side: 5 } as dyn Shape;    // area 25 -> scale(2) -> 100
+    trace_meta("step3.dyn_obj_meta", shapes[0]);
+
+    let mut before_total = 0;
+    let mut after_total = 0;
+    for i in 0..shapes.len {
+        before_total += shapes[i].area();
+        shapes[i].scale(2);
+        after_total += shapes[i].area();
+    }
+    trace_i32("step4.area_before", before_total);
+    trace_i32("step5.area_after", after_total);
+
+    return iter_sum + after_total;
+}

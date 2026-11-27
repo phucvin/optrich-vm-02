@@ -1,0 +1,21 @@
+// Example 08b (Module 2/2) — `main`: dispatches `dyn Renderable` methods across modules via `call_ref`
+
+import host::trace_i32;
+import widgets::make_button;
+import widgets::make_slider;
+
+export fn main() -> i32 {
+    let w1 = make_button(12, 4);  // 12 + 8 = 20
+    let w2 = make_slider(10, 65); // 65 - 10 = 55
+    let w3 = make_button(6, 2);   // 6 + 4 = 10
+
+    let a = w1.width();
+    let b = w2.width();
+    let c = w3.width();
+
+    trace_i32("step1.button1_width", a);
+    trace_i32("step2.slider_width", b);
+    trace_i32("step3.button2_width", c);
+
+    return a + b + c;
+}

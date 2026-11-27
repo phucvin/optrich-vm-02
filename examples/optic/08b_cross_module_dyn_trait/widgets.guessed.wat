@@ -1,0 +1,47 @@
+;; Guessed WAT for examples/optic/08b_cross_module_dyn_trait/widgets.opc
+(module
+  (global $Button_vt (mut handle) (handle.null))
+  (global $Slider_vt (mut handle) (handle.null))
+
+  (func $Button__width (param $self handle) (result i32)
+    (i32.add (mem.read_i32 (local.get $self) (i32.const 0))
+             (i32.mul (mem.read_i32 (local.get $self) (i32.const 4)) (i32.const 2))))
+
+  (func $Slider__width (param $self handle) (result i32)
+    (i32.sub (mem.read_i32 (local.get $self) (i32.const 4))
+             (mem.read_i32 (local.get $self) (i32.const 0))))
+
+  (func (export "make_button") (param $label_len i32) (param $padding i32) (result ro_handle)
+    (local $vt rw_handle)
+    (local $data rw_handle)
+    (local $obj rw_handle)
+    (if (mem.is_null (global.get $Button_vt))
+      (then
+        (local.set $vt (mem.alloc_vtable (i32.const 1)))
+        (mem.write_func (local.get $vt) (i32.const 0) (ref.func $Button__width))
+        (global.set $Button_vt (mem.readonly (local.get $vt)))))
+    (local.set $data (mem.alloc (i32.const 8) (i32.const 0)))
+    (mem.write_i32 (local.get $data) (i32.const 0) (local.get $label_len))
+    (mem.write_i32 (local.get $data) (i32.const 4) (local.get $padding))
+    (local.set $obj (mem.alloc (i32.const 0) (i32.const 2)))
+    (mem.write_ref (local.get $obj) (i32.const 0) (mem.readonly (local.get $data)))
+    (mem.write_ref (local.get $obj) (i32.const 1) (global.get $Button_vt))
+    (mem.readonly (local.get $obj)))
+
+  (func (export "make_slider") (param $min_val i32) (param $max_val i32) (result ro_handle)
+    (local $vt rw_handle)
+    (local $data rw_handle)
+    (local $obj rw_handle)
+    (if (mem.is_null (global.get $Slider_vt))
+      (then
+        (local.set $vt (mem.alloc_vtable (i32.const 1)))
+        (mem.write_func (local.get $vt) (i32.const 0) (ref.func $Slider__width))
+        (global.set $Slider_vt (mem.readonly (local.get $vt)))))
+    (local.set $data (mem.alloc (i32.const 8) (i32.const 0)))
+    (mem.write_i32 (local.get $data) (i32.const 0) (local.get $min_val))
+    (mem.write_i32 (local.get $data) (i32.const 4) (local.get $max_val))
+    (local.set $obj (mem.alloc (i32.const 0) (i32.const 2)))
+    (mem.write_ref (local.get $obj) (i32.const 0) (mem.readonly (local.get $data)))
+    (mem.write_ref (local.get $obj) (i32.const 1) (global.get $Slider_vt))
+    (mem.readonly (local.get $obj)))
+)
