@@ -188,6 +188,10 @@ FatHandle MemoryStore::make_ref_span(HandleId h, uint32_t ref_off, uint32_t ref_
 }
 
 FatHandle MemoryStore::as_readonly(HandleId h) {
+    const MemoryBlock& existing = get_block(h);
+    if (existing.readOnly) {
+        return to_fat_handle(h);
+    }
     maybe_trigger_gc();
     const MemoryBlock& src = get_block(h);
     HandleId root = (src.rootHandle != kNullHandle) ? src.rootHandle : h;
@@ -296,6 +300,24 @@ void MemoryStore::write_ref(HandleId h, uint32_t slot_idx, HandleId child) {
     }
     MemoryBlock& root = get_root_mut(blk);
     root.refs[blk.refOffset + slot_idx] = child;
+}
+
+void MemoryStore::copy_refs(HandleId dst, uint32_t dst_off, HandleId src, uint32_t src_off, uint32_t count) {
+    MemoryBlock& dst_blk = get_block_mut(dst);
+    const MemoryBlock& src_blk = get_block(src);
+    if (dst_blk.readOnly) {
+        throw Trap("mem.copy_refs into read-only handle");
+    }
+    if (static_cast<uint64_t>(dst_off) + static_cast<uint64_t>(count) > dst_blk.refCount ||
+        static_cast<uint64_t>(src_off) + static_cast<uint64_t>(count) > src_blk.refCount) {
+        throw Trap("mem.copy_refs out of bounds");
+    }
+    if (count == 0) return;
+    MemoryBlock& dst_root = get_root_mut(dst_blk);
+    const MemoryBlock& src_root = get_root(src_blk);
+    std::memmove(dst_root.refs.data() + dst_blk.refOffset + dst_off,
+                 src_root.refs.data() + src_blk.refOffset + src_off,
+                 static_cast<size_t>(count) * sizeof(HandleId));
 }
 
 FuncRef MemoryStore::read_func(HandleId h, uint32_t slot_idx) const {

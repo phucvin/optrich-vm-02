@@ -89,6 +89,7 @@ enum class OpCode : uint16_t {
 
     // Bulk memory ops
     MemCopy,       // (dst, dst_off, src, src_off, len) -> ()
+    MemCopyRefs,   // (dst, dst_off, src, src_off, count) -> ()
     MemFill,       // (dst, dst_off, val, len) -> ()
     MemCmp,        // (a, a_off, b, b_off, len) -> i32
 

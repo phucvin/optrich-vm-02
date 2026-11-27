@@ -1214,6 +1214,15 @@ private:
             fn_.code.push_back(Instr::make(OpCode::MemCopy));
             return;
         }
+        if (op == "mem.copy_refs") {
+            pop_expected(ValType::I32, line);
+            pop_expected(ValType::I32, line);
+            pop_handle(line, false);
+            pop_expected(ValType::I32, line);
+            pop_handle(line, true);
+            fn_.code.push_back(Instr::make(OpCode::MemCopyRefs));
+            return;
+        }
         if (op == "mem.fill") {
             pop_expected(ValType::I32, line);
             pop_expected(ValType::I32, line);

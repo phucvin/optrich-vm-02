@@ -32,15 +32,12 @@
     (mem.write_ref (local.get $v) (i32.const 0) (local.get $buf))
     (local.get $v))
 
-  ;; NOTE (Spec Friction #4): Without `mem.copy_refs`, growing a ref-Vec requires
-  ;; a manual copy loop in WAT.
   (func $Vec_ref__push (param $v rw_handle) (param $item handle)
     (local $len i32)
     (local $cap i32)
     (local $buf handle)
     (local $new_cap i32)
     (local $new_buf rw_handle)
-    (local $i i32)
 
     (local.set $len (mem.read_i32 (local.get $v) (i32.const 0)))
     (local.set $cap (mem.read_i32 (local.get $v) (i32.const 4)))
@@ -53,14 +50,7 @@
             (then (i32.mul (local.get $cap) (i32.const 2)))
             (else (i32.const 4))))
         (local.set $new_buf (mem.alloc (i32.const 0) (local.get $new_cap)))
-        (local.set $i (i32.const 0))
-        (block $copy_done
-          (loop $copy_lp
-            (br_if $copy_done (i32.ge_s (local.get $i) (local.get $len)))
-            (mem.write_ref (local.get $new_buf) (local.get $i)
-              (mem.read_ref (local.get $buf) (local.get $i)))
-            (local.set $i (i32.add (local.get $i) (i32.const 1)))
-            (br $copy_lp)))
+        (mem.copy_refs (local.get $new_buf) (i32.const 0) (local.get $buf) (i32.const 0) (local.get $len))
         (mem.write_i32 (local.get $v) (i32.const 4) (local.get $new_cap))
         (mem.write_ref (local.get $v) (i32.const 0) (local.get $new_buf))
         (local.set $buf (local.get $new_buf))))

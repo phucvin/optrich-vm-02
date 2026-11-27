@@ -186,6 +186,55 @@ TEST(bulk_mem_copy_fill_cmp) {
     ASSERT_EQ(vm.invoke(inst, "bulk")[0].i32, 1);
 }
 
+TEST(mem_copy_refs_and_readonly_noop) {
+    const char* wat = R"(
+    (module
+      (string $s0 "zero")
+      (string $s1 "one")
+      (string $s2 "two")
+      (func (export "test") (result i32)
+        (local $a rw_handle)
+        (local $b rw_handle)
+        (local $ro1 ro_handle)
+        (local $ro2 ro_handle)
+
+        ;; as_readonly on an already-readonly handle must be a zero-alloc no-op (same handle ID)
+        (local.set $ro1 (mem.const_str $s0))
+        (local.set $ro2 (mem.readonly (local.get $ro1)))
+        (if (i32.eqz (mem.eq (local.get $ro1) (local.get $ro2)))
+          (then (return (i32.const -1))))
+
+        ;; mem.copy_refs between two ref arrays + overlapping shift within $b
+        (local.set $a (mem.alloc (i32.const 0) (i32.const 3)))
+        (local.set $b (mem.alloc (i32.const 0) (i32.const 4)))
+        (mem.write_ref (local.get $a) (i32.const 0) (mem.const_str $s0))
+        (mem.write_ref (local.get $a) (i32.const 1) (mem.const_str $s1))
+        (mem.write_ref (local.get $a) (i32.const 2) (mem.const_str $s2))
+
+        (mem.copy_refs (local.get $b) (i32.const 0) (local.get $a) (i32.const 0) (i32.const 3))
+        ;; Overlapping shift: b[1..4) <- b[0..3)
+        (mem.copy_refs (local.get $b) (i32.const 1) (local.get $b) (i32.const 0) (i32.const 3))
+
+        ;; Expect b[0]==s0, b[1]==s0, b[2]==s1, b[3]==s2
+        (i32.add
+          (i32.add
+            (mem.eq (mem.read_ref (local.get $b) (i32.const 0)) (mem.const_str $s0))
+            (mem.eq (mem.read_ref (local.get $b) (i32.const 1)) (mem.const_str $s0)))
+          (i32.add
+            (mem.eq (mem.read_ref (local.get $b) (i32.const 2)) (mem.const_str $s1))
+            (mem.eq (mem.read_ref (local.get $b) (i32.const 3)) (mem.const_str $s2)))))
+    )
+    )";
+    CompiledModule mod = compile_wat(wat);
+    MemoryStore store;
+    ModuleInstance inst(std::move(mod), store);
+    VM vm;
+    size_t live_before = store.live_block_count();
+    ASSERT_EQ(vm.invoke(inst, "test")[0].i32, 4);
+    // Only $a and $b were allocated (zero extra blocks from mem.readonly on $ro1)
+    ASSERT_EQ(store.live_block_count() - live_before, 2u);
+}
+
 int main() {
     return optrich_test::run_all_tests();
 }

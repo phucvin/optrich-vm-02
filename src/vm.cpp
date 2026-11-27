@@ -432,6 +432,7 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         &&L_MemReadFunc,
         &&L_MemWriteFunc,
         &&L_MemCopy,
+        &&L_MemCopyRefs,
         &&L_MemFill,
         &&L_MemCmp,
         &&L_I32Eqz,
@@ -990,6 +991,16 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         if (len > 0) {
             std::memmove(dst.ptr + dst_off, src.ptr + src_off, len);
         }
+        DISPATCH();
+    }
+
+    CASE_OP(MemCopyRefs) {
+        uint32_t count   = static_cast<uint32_t>(stack_base[--sp].i32);
+        uint32_t src_off = static_cast<uint32_t>(stack_base[--sp].i32);
+        FatHandle src    = stack_base[--sp].handle;
+        uint32_t dst_off = static_cast<uint32_t>(stack_base[--sp].i32);
+        FatHandle dst    = stack_base[--sp].handle;
+        store.copy_refs(dst.id, dst_off, src.id, src_off, count);
         DISPATCH();
     }
 

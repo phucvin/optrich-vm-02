@@ -77,6 +77,7 @@ public:
     // Reference-slot operations (bounds & readOnly checked)
     FatHandle read_ref(HandleId h, uint32_t slot_idx) const;
     void      write_ref(HandleId h, uint32_t slot_idx, HandleId child);
+    void      copy_refs(HandleId dst, uint32_t dst_off, HandleId src, uint32_t src_off, uint32_t count);
 
     // FuncRef vtable-slot operations (bounds & readOnly checked)
     FuncRef read_func(HandleId h, uint32_t slot_idx) const;

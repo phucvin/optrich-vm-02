@@ -141,7 +141,7 @@ A `Vec<T>` is a 2-part split-block container:
   * `bytes[0..4)`: `len` (`i32`)
   * `bytes[4..8)`: `cap` (`i32`)
   * `refs[0]`: backing buffer (`mem.alloc(cap * sizeof(T), 0)` for primitives, or `mem.alloc(0, cap)` for references)
-* **Growth:** When `len == cap`, allocate `new_cap = max(cap * 2, 4)` backing block, copy existing elements (`mem.copy` for primitives; loop of `mem.read_ref`/`mem.write_ref` for refs until `mem.copy_refs` is added), and update `refs[0]` and `cap`.
+* **Growth:** When `len == cap`, allocate `new_cap = max(cap * 2, 4)` backing block, copy existing elements (`mem.copy` for primitives; `mem.copy_refs` for references), and update `refs[0]` and `cap`.
 
 ---
 
@@ -163,4 +163,4 @@ Lowers to a regular module function `$Counter__inc` taking `(param $self rw_hand
 1. **Implicit vs. explicit `readonly(...)`:** Should passing `[]u8` to a `ro []u8` parameter require explicit `readonly(buf)` or auto-insert `mem.readonly`? (Explicit makes the capability downgrade visible; implicit is more ergonomic.)
 2. **Shallow vs. transitive `ro T`:** If `e: ro Entry` has a mutable child field `child: Node`, should `e.child` be `ro Node` (transitive) or `Node` (shallow)?
 3. **WAT `mem.read_ref` return type:** `mem.read_ref` currently returns dynamic `handle` in Optrich VM. When a struct stores a `rw_handle` or `ro_handle` in a `refs` slot and reads it back, WAT requires `handle` (not `rw_handle`/`ro_handle`) unless the VM or compiler knows the static type. Let's observe how much friction this causes in `.guessed.wat` during Iteration 1!
-4. **VM `mem.copy_refs` opcode:** Observe how verbose ref-`Vec` growth is without `mem.copy_refs`.
+4. ~~**VM `mem.copy_refs` opcode:**~~ **Resolved:** Added `mem.copy_refs(dst, dst_off, src, src_off, count)` and made `mem.readonly` a zero-allocation no-op on already-`ro` handles (eliminating redundant wrapper blocks on `mem.readonly(mem.read_ref(...))`).

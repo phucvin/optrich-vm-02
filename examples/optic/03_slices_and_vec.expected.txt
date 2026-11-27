@@ -6,5 +6,5 @@ step5.tok3: "delta"
 step6.tok2_meta: ro=true bytes=5 refs=0
 step7.header: "OPTIC"
 step8.header_meta: ro=true bytes=5 refs=0
-step9.gc: live=17 swept=8
+step9.gc: live=17 swept=4
 return: 45
