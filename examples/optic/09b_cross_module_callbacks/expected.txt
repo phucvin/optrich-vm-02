@@ -1,0 +1,2 @@
+step1.cross_mod_map_sum: 39
+return: 39

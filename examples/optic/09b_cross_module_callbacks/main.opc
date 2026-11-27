@@ -1,0 +1,20 @@
+// Example 09b (Module 2/2) — `main`: passes a capturing closure across module boundary to `algo::map_sum`
+
+import host::trace_i32;
+import algo::map_sum;
+
+export fn main() -> i32 {
+    let nums = new [i32; 3];
+    nums[0] = 2;
+    nums[1] = 4;
+    nums[2] = 6;
+
+    let scale = 3;
+    let bias = 1;
+    let affine = |x: i32| -> i32 { return x * scale + bias; };
+
+    // (2*3+1) + (4*3+1) + (6*3+1) = 7 + 13 + 19 = 39
+    let res = map_sum(readonly(nums), affine);
+    trace_i32("step1.cross_mod_map_sum", res);
+    return res;
+}

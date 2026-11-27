@@ -1,0 +1,9 @@
+// Example 09b (Module 1/2) — `algo`: invokes a caller-provided capturing closure cross-module via `call_ref`
+
+export fn map_sum(xs: ro []i32, f: |i32| -> i32) -> i32 {
+    let mut acc = 0;
+    for i in 0..xs.len {
+        acc += f(xs[i]);
+    }
+    return acc;
+}

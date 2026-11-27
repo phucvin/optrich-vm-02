@@ -1,0 +1,8 @@
+step1.fn_double: 14
+step2.fn_square: 36
+step3.closure_env_meta: ro=true bytes=4 refs=1
+step4.add10_5: 15
+step5.mut_capture_1: 115
+step6.mut_capture_2: 140
+step7.mut_capture_read: 145
+return: 210

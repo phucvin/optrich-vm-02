@@ -304,7 +304,18 @@ Generic structs (`struct Box<T>`, `struct Pair<A, B>`) and generic functions (`f
 
 ---
 
-## 11. Open Design Questions (To Resolve Across Iterations)
+## 11. Closures, Function Values & Mutable Captures
+
+* **Non-capturing function values (`fn(A) -> B`):** Lower directly to Wasm `funcref` (`ref.func $fn`) and invoke via `call_ref` with zero heap allocation.
+* **Capturing closures (`|x| ...`):** Lower to an environment split block:
+  * `refs[0]`: cached frozen 1-slot vtable holding `(ref.func $closure_body)` (where `$closure_body` takes `(param $env handle)` first).
+  * `bytes[0..)`: immutable captured primitives (by value).
+  * `refs[1..)`: captured handles and **heap-promoted `let mut` capture cells** (`mem.alloc(sizeof(T), 0)` or `mem.alloc(0, 1)`) shared between the enclosing scope and any closures capturing the mutable variable.
+* **Cross-module callbacks:** Closure handles pass directly across modules and invoke via `call_ref` (since `FuncRef` binds its defining `ModuleInstance*`).
+
+---
+
+## 12. Open Design Questions (To Resolve Across Iterations)
 
 1. **Implicit vs. explicit `readonly(...)`:** Should passing `[]u8` to a `ro []u8` parameter require explicit `readonly(buf)` or auto-insert `mem.readonly`? (Explicit makes the capability downgrade visible; implicit is more ergonomic.)
 2. **Shallow vs. transitive `ro T`:** If `e: ro Entry` has a mutable child field `child: Node`, should `e.child` be `ro Node` (transitive) or `Node` (shallow)?
