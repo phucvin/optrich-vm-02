@@ -1,0 +1,40 @@
+// Example 11b — Generic `VecDeque<T>` Ring Buffer (Wrap-Around & Linearizing Growth via `mem.copy`)
+
+import host::trace_i32;
+
+struct VecDeque<T> {
+    head: i32,
+    len: i32,
+    cap: i32,
+    buf: []T,
+}
+
+export fn main() -> i32 {
+    let dq = VecDeque<i32>::new(4);
+    dq.push_back(10);
+    dq.push_back(20);
+    dq.push_back(30);
+    // Pop front -> head advances to 1, elements are [20, 30]
+    let f1 = dq.pop_front();
+    trace_i32("step1.pop_front", f1);
+
+    // Push back wraps around end of cap=4 buffer: [20, 30, 40, 50]
+    dq.push_back(40);
+    dq.push_back(50);
+    trace_i32("step2.wrapped_len", dq.len);
+
+    // Push front triggers wrap-around growth (cap 4 -> 8, linearizing via mem.copy), then prepends 5!
+    // Logical order becomes: [5, 20, 30, 40, 50]
+    dq.push_front(5);
+    trace_i32("step3.grown_cap", dq.cap);
+    trace_i32("step4.grown_len", dq.len);
+
+    let b1 = dq.pop_back();  // 50
+    let f2 = dq.pop_front(); // 5
+    let f3 = dq.pop_front(); // 20
+    trace_i32("step5.pop_back", b1);
+    trace_i32("step6.pop_front_2", f2);
+    trace_i32("step7.pop_front_3", f3);
+
+    return f1 + b1 + f2 + f3;
+}

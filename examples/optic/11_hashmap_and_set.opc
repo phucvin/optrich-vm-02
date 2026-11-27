@@ -1,0 +1,75 @@
+// Example 11 — Generic `HashMap<K: Hash + Eq, V>` and `Set<T: Hash + Eq>` (Open Addressing + Rehash + GC)
+
+import host::trace_i32;
+import host::trace_gc;
+
+trait Hash {
+    fn hash(self: ro Self) -> u32;
+}
+
+trait Eq {
+    fn eq(self: ro Self, other: ro Self) -> bool;
+}
+
+impl Hash for str {
+    fn hash(self: ro str) -> u32 {
+        let mut h: u32 = 2166136261;
+        for i in 0..self.len {
+            h = (h ^ (self[i] as u32)) * 16777619;
+        }
+        return h;
+    }
+}
+
+impl Eq for str {
+    fn eq(self: ro str, other: ro str) -> bool {
+        if self.len != other.len { return false; }
+        return mem_cmp(self, 0, other, 0, self.len) == 0;
+    }
+}
+
+struct HashMap<K: Hash + Eq, V> {
+    len: i32,
+    cap: i32,
+    states: []u8, // 0=empty, 1=occupied, 2=tombstone
+    keys: []K,
+    vals: []V,
+}
+
+struct Set<T: Hash + Eq> {
+    inner: HashMap<T, u8>,
+}
+
+export fn main() -> i32 {
+    // 1. HashMap<str, i32> starting at cap=4, triggering rehash (4 -> 8) on 3rd insert
+    let m = HashMap<str, i32>::new(4);
+    m.insert("alpha", 10);
+    m.insert("beta", 20);
+    m.insert("gamma", 30); // triggers rehash to cap=8
+    m.insert("delta", 40);
+    m.insert("beta", 25);  // update existing key
+
+    trace_i32("step1.map_len", m.len);
+    trace_i32("step2.map_cap", m.cap);
+    trace_i32("step3.get_beta", m.get("beta").unwrap_or(-1));
+    trace_i32("step4.get_missing", m.get("omega").unwrap_or(-1));
+
+    // Remove "gamma" (marks tombstone + nulls keys[slot] for GC safety)
+    let removed = m.remove("gamma");
+    trace_i32("step5.removed_gamma", removed as i32);
+    trace_i32("step6.get_gamma_after", m.get("gamma").unwrap_or(-1));
+    trace_i32("step7.get_delta_after", m.get("delta").unwrap_or(-1));
+
+    // 2. Set<str> deduplication
+    let s = Set<str>::new(4);
+    s.add("red");
+    s.add("green");
+    s.add("red"); // duplicate ignored
+    trace_i32("step8.set_len", s.len());
+    trace_i32("step9.set_has_green", s.contains("green") as i32);
+
+    // 3. GC sweeps the old cap=4 backing arrays from HashMap<str, i32> rehash!
+    trace_gc("step10.gc_after_rehash");
+
+    return m.get("alpha").unwrap_or(0) + m.get("beta").unwrap_or(0) + m.get("delta").unwrap_or(0);
+}

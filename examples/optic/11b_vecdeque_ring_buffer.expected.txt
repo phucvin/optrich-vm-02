@@ -1,0 +1,8 @@
+step1.pop_front: 10
+step2.wrapped_len: 4
+step3.grown_cap: 8
+step4.grown_len: 5
+step5.pop_back: 50
+step6.pop_front_2: 5
+step7.pop_front_3: 20
+return: 85
