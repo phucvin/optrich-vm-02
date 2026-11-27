@@ -10,7 +10,10 @@ Build the CLI first with `make`, or run all examples at once with `make examples
 | [`03_bulk_and_spans.wat`](03_bulk_and_spans.wat) | 2 | `mem.fill`, overlapping `mem.copy`, nested `mem.span`, `mem.readonly` | `260` |
 | [`04_gc_and_clone_span.wat`](04_gc_and_clone_span.wat) | 3 | Precise cycle collection, auto-GC threshold, `mem.clone_span` detaching 4 KiB buffers | `4950` + `[gc] ...` |
 | [`05_multimodule_sharing/`](05_multimodule_sharing/) | 4 | Direct cross-module calls passing zero-copy `ro_handle` spans + `mem.cmp` | `102` |
-| [`06_polymorphic_interfaces/`](06_polymorphic_interfaces/) | 4 | Stateless `shape.wat` interface + Go/Rust trait objects (`ro_handle` `[data, vtable]`), multi-signature `call_ref` (`area`, `scale`) | `316` + `[gc] ...` |
+| [`06_polymorphic_interfaces/`](06_polymorphic_interfaces/) | 4 | Stateless `shape.wat` interface + boxed Go-style trait objects (`ro_handle` `[data, vtable]`), multi-signature `call_ref` (`area`, `scale`) | `316` + `[gc] ...` |
+| [`07_zero_copy_split.wat`](07_zero_copy_split.wat) | 2 | Zero-copy CSV string tokenizer (`mem.span`, `mem.ref_span`, `mem.cmp`) | `361` |
+| [`08_closure.wat`](08_closure.wat) | 4 | Simple closure (`make_adder`) with captured `bytes` env + 1-method vtable + `call_ref` | `120` |
+| [`09_rust_trait_dispatch.wat`](09_rust_trait_dispatch.wat) | 4 | Rust-style unboxed `&dyn Trait` fat-pointer dispatch `(data, vtable)` (zero wrapper allocation!) | `144` + `[gc] ...` |
 
 ## Running Individually
 
@@ -33,4 +36,8 @@ Build the CLI first with `make`, or run all examples at once with `make examples
   --link square=examples/06_polymorphic_interfaces/square.wat \
   --gc-stats \
   examples/06_polymorphic_interfaces/main.wat main
+
+./build/optrich-vm examples/07_zero_copy_split.wat main
+./build/optrich-vm examples/08_closure.wat main
+./build/optrich-vm --gc-stats examples/09_rust_trait_dispatch.wat main
 ```

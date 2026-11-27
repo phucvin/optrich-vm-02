@@ -41,6 +41,9 @@ examples: $(CLI_BIN)
 	@echo "--- 04_gc_and_clone_span ---"; $(CLI_BIN) --gc-threshold 32 --gc-stats examples/04_gc_and_clone_span.wat main
 	@printf "05_multimodule_sharing: "; $(CLI_BIN) --link strlib=examples/05_multimodule_sharing/strlib.wat examples/05_multimodule_sharing/app.wat main
 	@echo "--- 06_polymorphic_interfaces ---"; $(CLI_BIN) --link shape=examples/06_polymorphic_interfaces/shape.wat --link rect=examples/06_polymorphic_interfaces/rect.wat --link square=examples/06_polymorphic_interfaces/square.wat --gc-stats examples/06_polymorphic_interfaces/main.wat main
+	@printf "07_zero_copy_split: "; $(CLI_BIN) examples/07_zero_copy_split.wat main
+	@printf "08_closure: "; $(CLI_BIN) examples/08_closure.wat main
+	@echo "--- 09_rust_trait_dispatch ---"; $(CLI_BIN) --gc-stats examples/09_rust_trait_dispatch.wat main
 
 clean:
 	rm -rf $(BUILD_DIR)
