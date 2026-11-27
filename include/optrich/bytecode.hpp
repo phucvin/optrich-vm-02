@@ -59,9 +59,8 @@ enum class OpCode : uint16_t {
     MemCloneSpan,  // (h: handle) -> handle (detaches slice from backing buffer)
     MemByteLen,    // (h: handle) -> i32
     MemRefLen,     // (h: handle) -> i32
-    MemFuncLen,    // (h: handle) -> i32
-    MemIsReadOnly, // (h: handle) -> i32
-    MemIsNull,     // (h: handle) -> i32
+    MemFuncLen,    // (h: ro_handle) -> i32
+    MemIsNull,     // (h: ro_handle) -> i32
     MemEq,         // (h1: handle, h2: handle) -> i32
 
     // Fast-path typed byte reads (FatHandle on stack -> direct pointer load)

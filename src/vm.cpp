@@ -411,7 +411,6 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         &&L_MemByteLen,
         &&L_MemRefLen,
         &&L_MemFuncLen,
-        &&L_MemIsReadOnly,
         &&L_MemIsNull,
         &&L_MemEq,
         &&L_MemReadU8,
@@ -827,15 +826,6 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
     CASE_OP(MemFuncLen) {
         FatHandle h = stack_base[sp - 1].handle;
         set_i32(sp - 1, static_cast<int32_t>(store.func_len(h.id)));
-        DISPATCH();
-    }
-
-    CASE_OP(MemIsReadOnly) {
-        FatHandle h = stack_base[sp - 1].handle;
-        if ((h.flags & kFlagValid) == 0) {
-            throw Trap("mem.is_readonly on null handle");
-        }
-        set_i32(sp - 1, ((h.flags & kFlagReadOnly) != 0) ? 1 : 0);
         DISPATCH();
     }
 

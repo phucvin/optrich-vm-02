@@ -1137,12 +1137,6 @@ private:
             fn_.code.push_back(Instr::make(OpCode::MemFuncLen));
             return;
         }
-        if (op == "mem.is_readonly") {
-            pop_handle(line, false);
-            push_type(ValType::I32);
-            fn_.code.push_back(Instr::make(OpCode::MemIsReadOnly));
-            return;
-        }
         if (op == "mem.is_null") {
             pop_handle(line, false);
             push_type(ValType::I32);

@@ -13,7 +13,6 @@ TEST(native_typed_read_write_and_lengths) {
         (local.set $h (mem.alloc (i32.const 32) (i32.const 3)))
         (if (i32.ne (mem.byte_len (local.get $h)) (i32.const 32)) (then (return (i32.const -1))))
         (if (i32.ne (mem.ref_len (local.get $h)) (i32.const 3)) (then (return (i32.const -2))))
-        (if (i32.ne (mem.is_readonly (local.get $h)) (i32.const 0)) (then (return (i32.const -3))))
 
         (mem.write_u8  (local.get $h) (i32.const 0)  (i32.const 250))
         (mem.write_u16 (local.get $h) (i32.const 2)  (i32.const 50000))
@@ -257,9 +256,9 @@ TEST(mem_sub_block_inline_struct_views) {
         (local.set $sub (mem.sub_block (local.get $outer) (i32.const 4) (i32.const 8) (i32.const 1) (i32.const 1)))
         ;; Mutate through sub_block -> aliases outer!
         (mem.write_i32 (local.get $sub) (i32.const 0) (i32.const 30))
-        ;; Verify outer bytes[4..8) == 30, sub ref_len == 1, byte_len == 8, and ro inheritance
+        ;; Verify outer bytes[4..8) == 30, sub ref_len == 1, byte_len == 8, and ro_sub reads match
         (local.set $ro_sub (mem.sub_block (mem.readonly (local.get $outer)) (i32.const 4) (i32.const 8) (i32.const 1) (i32.const 1)))
-        (if (i32.eqz (mem.is_readonly (local.get $ro_sub))) (then (return (i32.const -1))))
+        (if (i32.ne (mem.read_i32 (local.get $ro_sub) (i32.const 0)) (i32.const 30)) (then (return (i32.const -1))))
         (if (i32.ne (mem.byte_len (local.get $sub)) (i32.const 8)) (then (return (i32.const -2))))
         (if (i32.ne (mem.ref_len (local.get $sub)) (i32.const 1)) (then (return (i32.const -3))))
         (if (i32.eqz (mem.eq (mem.read_ref_ro (local.get $sub) (i32.const 0)) (mem.const_str $s_tag)))

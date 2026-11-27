@@ -1,6 +1,6 @@
 ;; Example 03 — Zero-Copy Spans, Nested Views, Read-Only Capabilities & Bulk Ops (Phase 2)
 ;; Showcases: mem.fill, mem.copy (including overlapping memmove), mem.cmp,
-;;            nested mem.span (flattened rootHandle), mem.readonly, mem.is_readonly.
+;;            nested mem.span (flattened rootHandle), mem.readonly.
 ;;
 ;; Run: ./build/optrich-vm examples/03_bulk_and_spans.wat main
 (module
@@ -42,6 +42,5 @@
     ;; Downgrade s1 to read-only before passing to $sum_view
     ;; s1 bytes are now: [10, 10, 50, 50, 50, 50, 20, 20] => sum = 260
     (local.set $ro (mem.readonly (local.get $s1)))
-    (if (i32.eqz (mem.is_readonly (local.get $ro))) (then (unreachable)))
     (call $sum_view (local.get $ro)))
 )
