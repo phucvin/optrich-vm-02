@@ -1,0 +1,11 @@
+step1.sprite_meta: ro=false bytes=12 refs=1
+step2.direct_x: 10
+step3.aliased_x: 15
+step4.aliased_y: 17
+step5.ro_sub_meta: ro=true bytes=8 refs=1
+step6.ro_sub_label: "hero"
+step7.ro_sub_sum: 32
+step8.flat_arr_meta: ro=false bytes=24 refs=3
+step9.detached_x: 17
+step10.orig_elem1_x: 10
+return: 59

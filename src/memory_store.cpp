@@ -187,6 +187,36 @@ FatHandle MemoryStore::make_ref_span(HandleId h, uint32_t ref_off, uint32_t ref_
     return to_fat_handle(id);
 }
 
+FatHandle MemoryStore::make_sub_block(HandleId h, uint32_t byte_off, uint32_t byte_len,
+                                      uint32_t ref_off, uint32_t ref_len) {
+    maybe_trigger_gc();
+    const MemoryBlock& src = get_block(h);
+    if (static_cast<uint64_t>(byte_off) + static_cast<uint64_t>(byte_len) > src.byteSize) {
+        throw Trap("mem.sub_block byte range out of bounds");
+    }
+    if (static_cast<uint64_t>(ref_off) + static_cast<uint64_t>(ref_len) > src.refCount) {
+        throw Trap("mem.sub_block ref range out of bounds");
+    }
+
+    HandleId root = (src.rootHandle != kNullHandle) ? src.rootHandle : h;
+    uint32_t abs_byte_off = src.byteOffset + byte_off;
+    uint32_t abs_ref_off  = src.refOffset + ref_off;
+    bool ro = src.readOnly;
+
+    HandleId id = allocate_slot();
+    MemoryBlock& span = objects_[id];
+    span.rootHandle = root;
+    span.byteOffset = abs_byte_off;
+    span.byteSize   = byte_len;
+    span.refOffset  = abs_ref_off;
+    span.refCount   = ref_len;
+    span.readOnly   = ro;
+    span.marked     = false;
+    span.alive      = true;
+    ++liveCount_;
+    return to_fat_handle(id);
+}
+
 FatHandle MemoryStore::as_readonly(HandleId h) {
     const MemoryBlock& existing = get_block(h);
     if (existing.readOnly) {

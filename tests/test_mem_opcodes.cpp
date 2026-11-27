@@ -235,6 +235,45 @@ TEST(mem_copy_refs_and_readonly_noop) {
     ASSERT_EQ(store.live_block_count() - live_before, 2u);
 }
 
+TEST(mem_sub_block_inline_struct_views) {
+    const char* wat = R"(
+    (module
+      (string $s_tag "inline_ok")
+      (func (export "test") (result i32)
+        (local $outer rw_handle)
+        (local $sub rw_handle)
+        (local $ro_sub ro_handle)
+        ;; Outer: bytes[0..4)=id, bytes[4..12)=inline Inner{x,y}, refs[0]=outer_str, refs[1]=inline Inner.label
+        (local.set $outer (mem.alloc (i32.const 12) (i32.const 2)))
+        (mem.write_i32 (local.get $outer) (i32.const 0) (i32.const 99))
+        (mem.write_i32 (local.get $outer) (i32.const 4) (i32.const 10))
+        (mem.write_i32 (local.get $outer) (i32.const 8) (i32.const 20))
+        (mem.write_ref (local.get $outer) (i32.const 1) (mem.const_str $s_tag))
+
+        ;; Take zero-copy sub_block view of Inner: bytes[4..12) + refs[1..2)
+        (local.set $sub (mem.sub_block (local.get $outer) (i32.const 4) (i32.const 8) (i32.const 1) (i32.const 1)))
+        ;; Mutate through sub_block -> aliases outer!
+        (mem.write_i32 (local.get $sub) (i32.const 0) (i32.const 30))
+        ;; Verify outer bytes[4..8) == 30, sub ref_len == 1, byte_len == 8, and ro inheritance
+        (local.set $ro_sub (mem.sub_block (mem.readonly (local.get $outer)) (i32.const 4) (i32.const 8) (i32.const 1) (i32.const 1)))
+        (if (i32.eqz (mem.is_readonly (local.get $ro_sub))) (then (return (i32.const -1))))
+        (if (i32.ne (mem.byte_len (local.get $sub)) (i32.const 8)) (then (return (i32.const -2))))
+        (if (i32.ne (mem.ref_len (local.get $sub)) (i32.const 1)) (then (return (i32.const -3))))
+        (if (i32.eqz (mem.eq (mem.read_ref (local.get $sub) (i32.const 0)) (mem.const_str $s_tag)))
+          (then (return (i32.const -4))))
+        ;; 30 + 20 + 99 = 149
+        (i32.add (mem.read_i32 (local.get $outer) (i32.const 4))
+                 (i32.add (mem.read_i32 (local.get $sub) (i32.const 4))
+                          (mem.read_i32 (local.get $outer) (i32.const 0)))))
+    )
+    )";
+    CompiledModule mod = compile_wat(wat);
+    MemoryStore store;
+    ModuleInstance inst(std::move(mod), store);
+    VM vm;
+    ASSERT_EQ(vm.invoke(inst, "test")[0].i32, 149);
+}
+
 int main() {
     return optrich_test::run_all_tests();
 }

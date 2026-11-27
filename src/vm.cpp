@@ -405,6 +405,7 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         &&L_MemAllocVtable,
         &&L_MemSpan,
         &&L_MemRefSpan,
+        &&L_MemSubBlock,
         &&L_MemReadOnly,
         &&L_MemCloneSpan,
         &&L_MemByteLen,
@@ -767,6 +768,25 @@ std::vector<Value> VM::invoke_index(ModuleInstance& inst, uint32_t func_idx,
         FatHandle res = store.make_ref_span(h.id, static_cast<uint32_t>(ref_off),
                                             static_cast<uint32_t>(ref_len));
         sp -= 2;
+        set_handle(sp - 1, res);
+        DISPATCH();
+    }
+
+    CASE_OP(MemSubBlock) {
+        int32_t ref_len  = stack_base[sp - 1].i32;
+        int32_t ref_off  = stack_base[sp - 2].i32;
+        int32_t byte_len = stack_base[sp - 3].i32;
+        int32_t byte_off = stack_base[sp - 4].i32;
+        FatHandle h      = stack_base[sp - 5].handle;
+        if (byte_off < 0 || byte_len < 0 || ref_off < 0 || ref_len < 0) {
+            throw Trap("mem.sub_block negative offset or length");
+        }
+        activeSp_ = sp - 4; // `h` remains rooted at sp - 5 during GC
+        FatHandle res = store.make_sub_block(
+            h.id,
+            static_cast<uint32_t>(byte_off), static_cast<uint32_t>(byte_len),
+            static_cast<uint32_t>(ref_off),  static_cast<uint32_t>(ref_len));
+        sp -= 4;
         set_handle(sp - 1, res);
         DISPATCH();
     }

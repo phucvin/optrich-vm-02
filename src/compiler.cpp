@@ -1098,6 +1098,16 @@ private:
             fn_.code.push_back(Instr::make(OpCode::MemRefSpan));
             return;
         }
+        if (op == "mem.sub_block") {
+            pop_expected(ValType::I32, line);
+            pop_expected(ValType::I32, line);
+            pop_expected(ValType::I32, line);
+            pop_expected(ValType::I32, line);
+            ValType ht = pop_handle(line, false);
+            push_type(ht);
+            fn_.code.push_back(Instr::make(OpCode::MemSubBlock));
+            return;
+        }
         if (op == "mem.readonly") {
             pop_handle(line, false);
             push_type(ValType::RoHandle);

@@ -56,6 +56,11 @@ public:
     // The new span has byteSize = 0 (pure ref view).
     FatHandle make_ref_span(HandleId h, uint32_t ref_off, uint32_t ref_len);
 
+    // Create a combined zero-copy byte+ref sub-block view backed by the same rootHandle,
+    // inheriting readOnly. Used for inlined nested structs and flat arrays of inline structs.
+    FatHandle make_sub_block(HandleId h, uint32_t byte_off, uint32_t byte_len,
+                             uint32_t ref_off, uint32_t ref_len);
+
     // Create a zero-copy read-only view of `h` preserving both byte and ref bounds.
     FatHandle as_readonly(HandleId h);
 

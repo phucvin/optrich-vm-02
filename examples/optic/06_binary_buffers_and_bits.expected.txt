@@ -1,0 +1,10 @@
+step1.pkt_magic: 20304
+step2.pkt_seq: 16909060
+step3.pkt_flags: 777
+step4.pkt_payload: "OK"
+step5.built_str: "seq=420:ok"
+step6.utf8_bytes: 6
+step7.utf8_chars: 4
+step8.bits_sum: 22
+step9.fnv1a_low16: 35134
+return: 799

@@ -88,7 +88,7 @@ struct Entry {
 **Important VM Note on `mem.read_ref`:**
 `mem.read_ref` returns dynamic `handle` in Optrich WAT (the VM does not know statically whether a ref slot held `rw_handle` or `ro_handle`). Therefore, in WAT lowering, locals/expressions receiving a `mem.read_ref` result use `handle` when needed, or `ro_handle` after `mem.readonly` if the field is `ro`. *(See Open Question #3 — we may want typed ref reads or `handle` locals for struct fields.)*
 
-### 3.1 Planned Extension: Inline Nested Structs & `mem.sub_block`
+### 3.1 Inline Nested Structs & `mem.sub_block` *(Implemented)*
 
 By default, nested struct fields (e.g., `origin: Point` inside `Rect`) are stored as separate heap allocations referenced via a `refs` slot. To eliminate extra allocations, GC objects, and pointer chasing for small or embedded structs, Optic can support **inlined nested structs** (e.g., `value struct` or an `inline` field modifier) backed by a minimal VM extension: **`mem.sub_block`**.
 

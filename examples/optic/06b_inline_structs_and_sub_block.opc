@@ -1,0 +1,63 @@
+// Example 06b — Inline Nested Structs & Flat Arrays of Inline Structs via `mem.sub_block`
+
+import host::trace_i32;
+import host::trace_str;
+import host::trace_meta;
+
+struct TagPoint {
+    x: i32,     // bytes[0..4)
+    y: i32,     // bytes[4..8)
+    label: str, // refs[0]
+}
+
+struct Sprite {
+    id: i32,              // bytes[0..4)
+    pos: inline TagPoint, // flattened: bytes[4..12), refs[0]
+}
+// Total Sprite layout: mem.alloc(12, 1) — single allocation, zero pointer chasing!
+
+fn shift_point(p: TagPoint, dx: i32, dy: i32) {
+    p.x += dx;
+    p.y += dy;
+}
+
+fn read_point_sum(p: ro TagPoint) -> i32 {
+    return p.x + p.y;
+}
+
+export fn main() -> i32 {
+    // 1. Single split-block allocation for Sprite with inlined TagPoint
+    let s = Sprite { id: 1, pos: TagPoint { x: 10, y: 20, label: "hero" } };
+    trace_meta("step1.sprite_meta", s);
+
+    // Direct field access (no sub_block needed!)
+    trace_i32("step2.direct_x", s.pos.x);
+
+    // Pass inline field as a TagPoint handle via mem.sub_block (zero-copy aliasing)
+    shift_point(s.pos, 5, -3);
+    trace_i32("step3.aliased_x", s.pos.x);
+    trace_i32("step4.aliased_y", s.pos.y);
+
+    // Passing ro Sprite's inline field preserves read-only capability
+    let ro_s = readonly(s);
+    let ro_p = ro_s.pos; // mem.sub_block on ro_handle -> ro_handle!
+    trace_meta("step5.ro_sub_meta", ro_p);
+    trace_str("step6.ro_sub_label", ro_p.label);
+    let psum = read_point_sum(ro_p);
+    trace_i32("step7.ro_sub_sum", psum);
+
+    // 2. Flat array of inline structs: []inline TagPoint -> mem.alloc(3*8, 3*1)
+    let pts = new [inline TagPoint; 3];
+    pts[0] = TagPoint { x: 1, y: 2, label: "p0" };
+    pts[1] = TagPoint { x: 10, y: 20, label: "p1" };
+    pts[2] = TagPoint { x: 100, y: 200, label: "p2" };
+    trace_meta("step8.flat_arr_meta", pts);
+
+    // Detach element 1 via clone(pts[1]) -> mem.clone_span(mem.sub_block(...))
+    let detached = clone(pts[1]);
+    shift_point(detached, 7, 8);
+    trace_i32("step9.detached_x", detached.x); // 17 (pts[1].x stays 10!)
+    trace_i32("step10.orig_elem1_x", pts[1].x);
+
+    return psum + detached.x + pts[1].x;
+}

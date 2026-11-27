@@ -54,6 +54,7 @@ enum class OpCode : uint16_t {
     MemAllocVtable,// (num_funcs: i32) -> rw_handle (vtable block holding funcrefs)
     MemSpan,       // (h: handle, byte_off: i32, byte_len: i32) -> handle
     MemRefSpan,    // (h: handle, ref_off: i32, ref_len: i32) -> handle
+    MemSubBlock,   // (h: handle, byte_off: i32, byte_len: i32, ref_off: i32, ref_len: i32) -> handle
     MemReadOnly,   // (h: handle) -> ro_handle
     MemCloneSpan,  // (h: handle) -> handle (detaches slice from backing buffer)
     MemByteLen,    // (h: handle) -> i32

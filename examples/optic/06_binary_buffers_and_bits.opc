@@ -1,0 +1,130 @@
+// Example 06 — Binary Buffers (BE/LE Wire Format), ByteBuf/StringBuilder, UTF-8 vs Bytes, and Bit Ops
+
+import host::trace_i32;
+import host::trace_str;
+
+fn write_u16_be(buf: []u8, off: i32, v: u32) {
+    buf[off]     = ((v >> 8) & 0xff) as u8;
+    buf[off + 1] = (v & 0xff) as u8;
+}
+
+fn read_u16_be(buf: ro []u8, off: i32) -> u32 {
+    return ((buf[off] as u32) << 8) | (buf[off + 1] as u32);
+}
+
+fn write_u32_be(buf: []u8, off: i32, v: u32) {
+    buf[off]     = ((v >> 24) & 0xff) as u8;
+    buf[off + 1] = ((v >> 16) & 0xff) as u8;
+    buf[off + 2] = ((v >> 8) & 0xff) as u8;
+    buf[off + 3] = (v & 0xff) as u8;
+}
+
+fn read_u32_be(buf: ro []u8, off: i32) -> u32 {
+    return ((buf[off] as u32) << 24)
+         | ((buf[off + 1] as u32) << 16)
+         | ((buf[off + 2] as u32) << 8)
+         | (buf[off + 3] as u32);
+}
+
+struct ByteBuf {
+    len: i32,
+    cap: i32,
+    data: []u8,
+}
+
+impl ByteBuf {
+    fn new(cap: i32) -> ByteBuf {
+        return ByteBuf { len: 0, cap: cap, data: new [u8; cap] };
+    }
+
+    fn push_str(self, s: str) {
+        // Bulk mem.copy into backing buffer
+        mem_copy(self.data, self.len, s, 0, s.len);
+        self.len += s.len;
+    }
+
+    fn push_u32_dec(self, mut n: u32) {
+        let tmp = new [u8; 10];
+        let mut k = 0;
+        if n == 0 {
+            tmp[0] = b'0';
+            k = 1;
+        } else {
+            while n > 0 {
+                tmp[k] = (48 + (n % 10)) as u8;
+                n = n / 10;
+                k += 1;
+            }
+        }
+        // Reverse into self.data
+        for i in 0..k {
+            self.data[self.len + i] = tmp[k - 1 - i];
+        }
+        self.len += k;
+    }
+
+    fn as_str(self: ro ByteBuf) -> str {
+        return readonly(self.data[0..self.len]);
+    }
+}
+
+fn utf8_count_codepoints(s: str) -> i32 {
+    let mut count = 0;
+    for i in 0..s.len {
+        // UTF-8 continuation bytes have top bits 10xxxxxx (0x80..0xBF)
+        if (s[i] & 0xC0) != 0x80 {
+            count += 1;
+        }
+    }
+    return count;
+}
+
+fn fnv1a_32(data: ro []u8) -> u32 {
+    let mut h: u32 = 2166136261;
+    for i in 0..data.len {
+        h = (h ^ (data[i] as u32)) * 16777619; // wrapping u32 arithmetic
+    }
+    return h;
+}
+
+export fn main() -> i32 {
+    // 1. Wire-format packet: [magic:u16_be][seq:u32_be][flags:i32_le]["OK"]
+    let pkt = new [u8; 12];
+    write_u16_be(pkt, 0, 0x4F50); // "OP"
+    write_u32_be(pkt, 2, 0x01020304);
+    pkt.write_i32_le(6, 777);
+    mem_copy(pkt, 10, "OK", 0, 2);
+
+    let ro_pkt = readonly(pkt);
+    let magic = read_u16_be(ro_pkt, 0) as i32;
+    let seq   = read_u32_be(ro_pkt, 2) as i32;
+    let flags = ro_pkt.read_i32_le(6);
+    let payload: str = ro_pkt[10..12];
+
+    trace_i32("step1.pkt_magic", magic);
+    trace_i32("step2.pkt_seq", seq);
+    trace_i32("step3.pkt_flags", flags);
+    trace_str("step4.pkt_payload", payload);
+
+    // 2. ByteBuf / StringBuilder formatting
+    let sb = ByteBuf::new(64);
+    sb.push_str("seq=");
+    sb.push_u32_dec(420);
+    sb.push_str(":ok");
+    trace_str("step5.built_str", sb.as_str());
+
+    // 3. UTF-8 byte len vs codepoint count ("Hi" + U+20AC Euro + "!" = 6 bytes, 4 codepoints)
+    let utf8_s = "Hi\xe2\x82\xac!";
+    trace_i32("step6.utf8_bytes", utf8_s.len);
+    trace_i32("step7.utf8_chars", utf8_count_codepoints(utf8_s));
+
+    // 4. Bit manipulation (clz, ctz, popcnt) + FNV-1a hash
+    let x: u32 = 0x00100500;
+    let bits_sum = x.clz() + x.ctz() + x.popcnt(); // 11 + 8 + 3 = 22
+    trace_i32("step8.bits_sum", bits_sum as i32);
+
+    let h = fnv1a_32("optic");
+    trace_i32("step9.fnv1a_low16", (h & 0xFFFF) as i32);
+
+    return flags + bits_sum as i32;
+}
