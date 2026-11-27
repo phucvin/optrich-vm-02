@@ -1,0 +1,2 @@
+step1.frozen_meta: ro=true bytes=6 refs=0
+trap: memory write on read-only handle

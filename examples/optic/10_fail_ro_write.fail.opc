@@ -1,0 +1,12 @@
+// Negative Compile-Time Spec 10a — Writing to a `ro` struct/slice must be rejected statically
+// EXPECT_ERROR: E_CAP_RO_WRITE "cannot mutate field/element through read-only capability `ro`"
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn bad_mutate(p: ro Point, s: ro []u8) {
+    p.x = 42;     // ERROR: E_CAP_RO_WRITE
+    s[0] = b'!';  // ERROR: E_CAP_RO_WRITE
+}

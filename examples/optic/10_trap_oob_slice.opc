@@ -1,0 +1,13 @@
+// Runtime Trap Spec 10e — Out-of-bounds slice index traps deterministically
+
+import host::trace_i32;
+
+export fn main() -> i32 {
+    let arr = new [i32; 3];
+    arr[0] = 11;
+    arr[1] = 22;
+    arr[2] = 33;
+    trace_i32("step1.valid_elem", arr[2]);
+    // Index 3 is out of bounds for len 3 -> traps!
+    return arr[3];
+}

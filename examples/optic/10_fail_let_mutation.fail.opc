@@ -1,0 +1,8 @@
+// Negative Compile-Time Spec 10c — Reassigning an immutable `let` binding must be rejected
+// EXPECT_ERROR: E_IMMUT_ASSIGN "cannot assign to immutable binding `x`; declare with `let mut`"
+
+export fn main() -> i32 {
+    let x = 10;
+    x = 20; // ERROR: E_IMMUT_ASSIGN
+    return x;
+}

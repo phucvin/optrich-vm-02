@@ -1,0 +1,2 @@
+step1.valid_elem: 33
+trap: memory read out of bounds

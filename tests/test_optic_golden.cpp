@@ -70,6 +70,7 @@ struct GoldenCase {
     std::vector<std::pair<std::string, fs::path>>  linkedMods;
     fs::path                                       mainWat;
     fs::path                                       expectedTxt;
+    bool                                           expectTrap = false;
 };
 
 std::vector<GoldenCase> discover_cases(const fs::path& root) {
@@ -83,16 +84,24 @@ std::vector<GoldenCase> discover_cases(const fs::path& root) {
     std::sort(entries.begin(), entries.end(),
               [](const auto& a, const auto& b) { return a.path().filename() < b.path().filename(); });
 
-    const std::string suffix = ".guessed.wat";
+    const std::string trap_suffix = ".trap.guessed.wat";
+    const std::string suffix      = ".guessed.wat";
     for (const auto& e : entries) {
         if (e.is_regular_file()) {
             std::string fname = e.path().filename().string();
-            if (fname.size() > suffix.size() &&
-                fname.compare(fname.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            if (fname.size() > trap_suffix.size() &&
+                fname.compare(fname.size() - trap_suffix.size(), trap_suffix.size(), trap_suffix) == 0) {
+                std::string stem = fname.substr(0, fname.size() - trap_suffix.size());
+                fs::path expected = root / (stem + ".trap.expected.txt");
+                if (fs::exists(expected)) {
+                    cases.push_back(GoldenCase{stem + " [trap]", {}, e.path(), expected, true});
+                }
+            } else if (fname.size() > suffix.size() &&
+                       fname.compare(fname.size() - suffix.size(), suffix.size(), suffix) == 0) {
                 std::string stem = fname.substr(0, fname.size() - suffix.size());
                 fs::path expected = root / (stem + ".expected.txt");
                 if (fs::exists(expected)) {
-                    cases.push_back(GoldenCase{stem, {}, e.path(), expected});
+                    cases.push_back(GoldenCase{stem, {}, e.path(), expected, false});
                 }
             }
         } else if (e.is_directory()) {
@@ -137,9 +146,24 @@ bool run_case(const GoldenCase& c) {
     ModuleInstance& main_inst = rt.instantiate_wat("__main__", read_file_str(c.mainWat));
     uint32_t fidx = main_inst.find_export("main");
     const FuncSignature& sig = main_inst.module().func_sig(fidx);
-    auto results = rt.vm().invoke_index(main_inst, fidx, {});
 
-    std::string actual = trace_out.str() + format_results(sig, results);
+    std::string actual;
+    if (c.expectTrap) {
+        bool trapped = false;
+        try {
+            (void)rt.vm().invoke_index(main_inst, fidx, {});
+        } catch (const Trap& t) {
+            trapped = true;
+            actual = trace_out.str() + "trap: " + t.what() + "\n";
+        }
+        if (!trapped) {
+            std::cerr << "  [FAIL] " << c.name << ": expected runtime trap, but main returned normally\n";
+            return false;
+        }
+    } else {
+        auto results = rt.vm().invoke_index(main_inst, fidx, {});
+        actual = trace_out.str() + format_results(sig, results);
+    }
     std::string expected = read_file_str(c.expectedTxt);
 
     auto actual_lines = split_lines(actual);

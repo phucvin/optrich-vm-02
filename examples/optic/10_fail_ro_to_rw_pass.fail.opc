@@ -1,0 +1,14 @@
+// Negative Compile-Time Spec 10d — Passing `ro T` / `ro []u8` to a mutable `T` / `[]u8` parameter must be rejected
+// EXPECT_ERROR: E_CAP_UPGRADE "cannot pass read-only `ro []u8` where mutable `[]u8` is required"
+
+fn fill_zero(buf: []u8) {
+    for i in 0..buf.len {
+        buf[i] = 0;
+    }
+}
+
+export fn main() -> i32 {
+    let s: ro []u8 = "immutable";
+    fill_zero(s); // ERROR: E_CAP_UPGRADE
+    return 0;
+}

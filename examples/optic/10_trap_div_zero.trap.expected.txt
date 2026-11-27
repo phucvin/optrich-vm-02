@@ -1,0 +1,2 @@
+step1.before_div_zero: 42
+trap: integer divide by zero

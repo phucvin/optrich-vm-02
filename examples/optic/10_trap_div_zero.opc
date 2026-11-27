@@ -1,0 +1,10 @@
+// Runtime Trap Spec 10g — Integer division by zero traps deterministically
+
+import host::trace_i32;
+
+export fn main() -> i32 {
+    let a = 42;
+    let b = 0;
+    trace_i32("step1.before_div_zero", a);
+    return a / b;
+}

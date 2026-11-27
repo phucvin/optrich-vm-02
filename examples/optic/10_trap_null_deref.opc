@@ -1,0 +1,11 @@
+// Runtime Trap Spec 10f — Forced unwrap (`!`) on `null` handle traps deterministically
+
+import host::trace_i32;
+
+struct Boxed { val: i32 }
+
+export fn main() -> i32 {
+    let b: Boxed? = null;
+    trace_i32("step1.before_null_deref", 1);
+    return b!.val; // traps with null handle dereference on read
+}

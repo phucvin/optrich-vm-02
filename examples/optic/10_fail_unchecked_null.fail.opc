@@ -1,0 +1,11 @@
+// Negative Compile-Time Spec 10b — Dereferencing nullable `T?` without a null check must be rejected
+// EXPECT_ERROR: E_NULL_UNCHECKED "cannot access field on nullable type `Node?` without null check"
+
+struct Node {
+    val: i32,
+    next: Node?,
+}
+
+fn bad_deref(n: Node?) -> i32 {
+    return n.val; // ERROR: E_NULL_UNCHECKED (must check `if n != null` or `match`)
+}
