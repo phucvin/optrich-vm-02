@@ -67,7 +67,9 @@
 ---
 
 ## Phase 6: Optic (`.opc`) High-Level Language *(Next)*
-*Build the Optrich-native high-level language targeting Optrich WAT directly (see [docs/high-level-language.md](high-level-language.md)).*
+*Design and build the Optrich-native high-level language targeting Optrich WAT directly (see [docs/high-level-language.md](high-level-language.md) and [docs/optic-design-workflow.md](optic-design-workflow.md)).*
+
+* **Stage 6.0 — Spec-first design & golden `.guessed.wat` verification:** Iterate on `docs/optic-spec.md`, `.opc` examples, hand-lowered `.guessed.wat` files, and step-level `.expected.txt` golden tests via `host::trace_*` before implementing the compiler.
 
 * **Frontend (`optic` lexer, parser, AST):** Clean recursive-descent parser for `.opc` modules (`fn`, `struct`, `trait`, `impl`, `let` / `let mut`, `if`/`else`, `while`, `for`, `import`/`export`).
 * **Type checker & automatic split-block layout:**

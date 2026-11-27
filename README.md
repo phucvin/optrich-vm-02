@@ -46,6 +46,7 @@ make bench
 * [Polymorphic Interfaces](docs/interfaces.md) — Go/Rust-style trait objects using `funcref`, read-only vtable blocks, and `call_ref`.
 * [Interpreter Optimizations & Benchmarks](docs/interpreter-optimizations.md) — `CallLocal`, primitive slot fast paths, peephole superinstructions, and before/after benchmark results.
 * [Compiling C & High-Level Languages (Optic)](docs/high-level-language.md) — Challenges of targeting `optrich-vm-02` from C and the design of **Optic** (`.opc`), the Optrich-native high-level language.
+* [Optic Design & Golden-Test Workflow](docs/optic-design-workflow.md) — Spec-first iterative workflow (`.opc` → `.guessed.wat` → `.expected.txt` golden verification) prior to compiler implementation.
 
 ## Status
 
