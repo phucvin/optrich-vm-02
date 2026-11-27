@@ -1,0 +1,9 @@
+step1.same_id: 1
+step2.diff_id: 0
+step3.val_eq: 1
+step4.rect_meta: ro=false bytes=8 refs=1
+step5.rect_origin_x: 10
+step6.rect_area: 20
+step7.tail_meta: ro=true bytes=0 refs=2
+step8.tail_sum_x: 110
+return: 130

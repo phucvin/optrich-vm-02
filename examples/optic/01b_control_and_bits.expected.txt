@@ -1,0 +1,6 @@
+step1.for_break_continue: 27
+step2.short_circuit_hits: 2
+step3.short_circuit_bits: 6
+step4.classify: -99
+step5.unsigned_bits: 1266
+return: 1295

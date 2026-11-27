@@ -1,0 +1,74 @@
+// Example 01b — Control Flow & Bitwise/Unsigned Ops
+// Exercises: break, continue (in `for` and `while`), short-circuit && / ||,
+// if/else-if expressions, u32 unsigned ops, and bitwise ops.
+
+import host::trace_i32;
+
+struct Counter {
+    hits: i32,
+}
+
+impl Counter {
+    fn bump_and_check(self, cond: bool) -> bool {
+        self.hits += 1;
+        return cond;
+    }
+}
+
+fn sum_skip_multiples_of_3_until(limit: i32, stop_sum: i32) -> i32 {
+    let mut acc = 0;
+    for i in 1..limit {
+        if (i % 3) == 0 {
+            continue; // must still increment `i`!
+        }
+        acc += i;
+        if acc >= stop_sum {
+            break;
+        }
+    }
+    return acc;
+}
+
+fn classify(x: i32) -> i32 {
+    return if x < 0 {
+        -1
+    } else if x == 0 {
+        0
+    } else {
+        1
+    };
+}
+
+fn unsigned_and_bits(v: u32) -> i32 {
+    // 0x80000000u >> 31 == 1 (logical shift, not arithmetic -1)
+    let hi = (v >> 31) as i32;
+    let masked = ((v & 0x000000ff) | 0x00000100) ^ 0x0000000f;
+    return hi * 1000 + (masked as i32);
+}
+
+export fn main() -> i32 {
+    // 1 + 2 + 4 + 5 + 7 + 8 = 27 (>= 25 -> break!)
+    let s = sum_skip_multiples_of_3_until(50, 25);
+    trace_i32("step1.for_break_continue", s);
+
+    // Short-circuit && and || proof via side-effect counter
+    let c = Counter { hits: 0 };
+    let r1 = false && c.bump_and_check(true);   // RHS skipped -> hits stays 0
+    let r2 = true  || c.bump_and_check(false);  // RHS skipped -> hits stays 0
+    let r3 = true  && c.bump_and_check(true);   // RHS runs    -> hits = 1
+    let r4 = false || c.bump_and_check(false);  // RHS runs    -> hits = 2
+    trace_i32("step2.short_circuit_hits", c.hits);
+    trace_i32("step3.short_circuit_bits",
+        (r1 as i32) * 8 + (r2 as i32) * 4 + (r3 as i32) * 2 + (r4 as i32));
+
+    // if / else-if expression
+    let cl = classify(-5) * 100 + classify(0) * 10 + classify(42);
+    trace_i32("step4.classify", cl);
+
+    // Unsigned logical right shift & bitwise ops
+    // v = 0x80000005u => hi = 1; masked = ((5 | 256) ^ 15) = (261 ^ 15) = 266 => 1266
+    let b = unsigned_and_bits(0x80000005 as u32);
+    trace_i32("step5.unsigned_bits", b);
+
+    return s + c.hits + b;
+}

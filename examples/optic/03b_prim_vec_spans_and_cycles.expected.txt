@@ -1,0 +1,7 @@
+step1.vec_len: 5
+step2.vec_pop: 50
+step3.vec_len_after_pop: 4
+step4.buf3_aliased: 99
+step5.s2_meta: ro=false bytes=12 refs=0
+step6.gc_sweeps_cycle: live=11 swept=4
+return: 199

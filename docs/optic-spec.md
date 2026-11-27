@@ -36,11 +36,16 @@ Optic is a small, statically typed, capability-safe language designed to lower *
 | `u8` | `i32` (0..255) | 1 | `mem.read_u8` / `mem.write_u8` |
 | `bool` | `i32` (0 or 1) | 1 | `mem.read_u8` / `mem.write_u8` |
 | `i32` | `i32` | 4 | `mem.read_i32` / `mem.write_i32` |
+| `u32` | `i32` (unsigned ops `_u`) | 4 | `mem.read_i32` / `mem.write_i32` |
 | `i64` | `i64` | 8 | `mem.read_i64` / `mem.write_i64` |
+| `u64` | `i64` (unsigned ops `_u`) | 8 | `mem.read_i64` / `mem.write_i64` |
 | `f32` | `f32` | 4 | `mem.read_f32` / `mem.write_f32` |
 | `f64` | `f64` | 8 | `mem.read_f64` / `mem.write_f64` |
 
-Explicit numeric conversions use `expr as Type` (e.g., `ch as i32`, `n as f64`).
+Explicit numeric conversions use `expr as Type` (e.g., `ch as i32`, `n as f64`, `x as u32`). Unsigned types (`u32`, `u64`, `u8`) lower comparisons, division, remainder, and right-shift to Wasm unsigned opcodes (`_u`).
+
+**Handle Identity:**
+* `a === b` / `a !== b` compare handle identity via `mem.eq` (same underlying handle ID) rather than structural field equality.
 
 ### 2.2 Capability Reference Types (Split-Block Handles)
 
@@ -91,7 +96,7 @@ struct Entry {
 * `let x = expr;` — immutable local binding (compile-time error to reassign).
 * `let mut x = expr;` — mutable local binding.
 
-### 4.2 `for i in start..end` (Superinstruction-Friendly Pattern)
+### 4.2 `for i in start..end` (Superinstruction-Friendly + `continue`-Safe)
 To automatically hit Optrich VM's Phase 5 peephole superinstructions (`BrIfLocalGeS` and `LocalIncI32`), `for i in start..end { body }` lowers to:
 
 ```wat
@@ -100,21 +105,28 @@ To automatically hit Optrich VM's Phase 5 peephole superinstructions (`BrIfLocal
 (block $break
   (loop $cont
     (br_if $break (i32.ge_s (local.get $i) (local.get $end)))
-    ;; body
+    (block $step
+      ;; body (`break` -> br $break; `continue` -> br $step)
+    )
     (local.set $i (i32.add (local.get $i) (i32.const 1)))
     (br $cont)))
 ```
+*(When the loop body contains no `continue`, the compiler omits `(block $step ...)`.)*
 
 ### 4.3 `while cond { body }`
 ```wat
 (block $break
   (loop $cont
     (br_if $break (i32.eqz <cond>))
-    ;; body
+    ;; body (`break` -> br $break; `continue` -> br $cont)
     (br $cont)))
 ```
 
-### 4.4 `if cond { a } else { b }`
+### 4.4 Short-Circuit `&&` / `||`
+* `a && b` → `(if (result i32) <a> (then (i32.ne <b> (i32.const 0))) (else (i32.const 0)))`
+* `a || b` → `(if (result i32) <a> (then (i32.const 1)) (else (i32.ne <b> (i32.const 0))))`
+
+### 4.5 `if cond { a } else { b }`
 Lowers to Wasm `(if (result T) <cond> (then ...) (else ...))` for expressions, or `(if <cond> (then ...) (else ...))` for statements.
 
 ---

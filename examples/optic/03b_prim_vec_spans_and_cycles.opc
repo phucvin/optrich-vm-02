@@ -1,0 +1,46 @@
+// Example 03b — Primitive `Vec<i32>`, Chained Mutable Spans, and Cyclic Object Graph GC
+
+import host::trace_i32;
+import host::trace_meta;
+import host::trace_gc;
+
+struct CycleNode {
+    id: i32,         // bytes[0..4)
+    next: CycleNode?, // refs[0]
+}
+
+fn make_and_drop_cycle() {
+    let a = CycleNode { id: 1, next: null };
+    let b = CycleNode { id: 2, next: null };
+    a.next = b;
+    b.next = a; // 2-node reference cycle; unreachable after function returns!
+}
+
+export fn main() -> i32 {
+    // 1. Primitive Vec<i32> with growth (cap 2 -> 4 -> 8 via mem.copy)
+    let nums = Vec<i32>::new(2);
+    for i in 1..6 {
+        nums.push(i * 10);
+    }
+    trace_i32("step1.vec_len", nums.len);
+    let popped = nums.pop();
+    trace_i32("step2.vec_pop", popped);
+    trace_i32("step3.vec_len_after_pop", nums.len);
+
+    // 2. Chained zero-copy mutable spans & aliasing
+    let buf = new [i32; 8];
+    for i in 0..8 {
+        buf[i] = i;
+    }
+    let s1 = buf[2..7]; // elements 2,3,4,5,6
+    let s2 = s1[1..4];  // elements 3,4,5 (chained span!)
+    s2[0] = 99;         // mutates buf[3] in-place!
+    trace_i32("step4.buf3_aliased", buf[3]);
+    trace_meta("step5.s2_meta", s2);
+
+    // 3. Cyclic object graph collected by precise mark-and-sweep GC
+    make_and_drop_cycle();
+    trace_gc("step6.gc_sweeps_cycle");
+
+    return nums[0] + nums[3] + popped + buf[3];
+}
