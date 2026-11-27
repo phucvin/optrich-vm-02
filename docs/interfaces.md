@@ -29,34 +29,40 @@ Instead of tables and integer slot IDs, Optrich VM 02 provides:
   │ refs[1]: vtable ─┼──┐
   └──────────────────┘  │
                         ▼
-             Read-Only Vtable (ro_handle: 2 funcrefs, shared by all rects)
-             ┌───┬─────────────────────────────────────────────┐
-             │ 0 │ FuncRef { inst: &rect, fn: rect_area      } │
-             │ 1 │ FuncRef { inst: &rect, fn: rect_perimeter } │
-             └───┴─────────────────────────────────────────────┘
+             Read-Only Vtable (ro_handle: 2 funcrefs with different signatures)
+             ┌───┬─────────────────────────────────────────────────────────┐
+             │ 0 │ FuncRef { inst: &rect, fn: rect_area  (handle)->i32   } │
+             │ 1 │ FuncRef { inst: &rect, fn: rect_scale (handle,i32)->() }│
+             └───┴─────────────────────────────────────────────────────────┘
 ```
 
 ### Key Properties
 
-1. **Zero tables, zero registration, zero slot collisions:**
-   `rect.wat` and `square.wat` don't even need to import an interface module or run a startup registrar. Each builds its own read-only vtable once (cached in a module global) and wraps `(data, vtable)` into a 2-ref `ro_handle`.
-2. **Pure data objects & unlimited interfaces:**
+1. **Stateless interface module as single source of truth:**
+   `shape.wat` owns **zero tables and zero global state**—it simply encapsulates the vtable layout via `make_vtable(area_fn, scale_fn)`, `wrap(data, vtable)`, `area(s)`, and `scale(s, factor)`. Neither implementers (`rect.wat`, `square.wat`) nor callers (`main.wat`) ever touch raw vtable slot indices.
+2. **Multiple method signatures in one vtable:**
+   Because `call_ref (type $sig)` checks the expected signature at each call site, a single vtable can hold methods with completely different parameter/return types (e.g., `area(handle) -> i32` and `scale(handle, i32) -> ()`).
+3. **Pure data objects & unlimited interfaces:**
    The underlying `data` block stores only private fields (`[width, height]`). The exact same `data` handle can be wrapped with different vtables (`Shape`, `Drawable`, `Serializable`) with zero layout conflicts.
-3. **100% unforgeable capabilities:**
-   Both `vtable` and `trait_obj` are `ro_handle`s, and `funcref`s cannot be forged from integers.
-4. **Automatic GC:**
-   Because `data` and `vtable` live in `refs[0]` and `refs[1]` of the trait object, the precise split-block GC automatically keeps both alive whenever the trait object is reachable and reclaims them when dropped.
+4. **100% unforgeable capabilities & automatic GC:**
+   Both `vtable` and `trait_obj` are `ro_handle`s (preventing callers from tampering with the vtable), `funcref`s cannot be forged from integers, and the precise GC traces both `refs[0]` (`data`) and `refs[1]` (`vtable`) automatically.
 
-### Direct Dispatch in WAT
+### Direct Dispatch Inside `shape.wat`
 
 ```wat
-(type $shape_method (func (param handle) (result i32)))
+(type $area_sig  (func (param handle) (result i32)))
+(type $scale_sig (func (param handle i32)))
 
-;; Call method 0 (area) on any Shape trait object — zero tables!
-(call_ref (type $shape_method)
-  (mem.read_ref  (local.get $trait) (i32.const 0))                 ;; self data
-  (mem.read_func (mem.read_ref (local.get $trait) (i32.const 1))  ;; vtable
-                 (i32.const 0)))                                  ;; method 0 = area
+(func (export "area") (param $s handle) (result i32)
+  (call_ref (type $area_sig)
+    (mem.read_ref  (local.get $s) (i32.const 0))
+    (mem.read_func (mem.read_ref (local.get $s) (i32.const 1)) (i32.const 0))))
+
+(func (export "scale") (param $s handle) (param $factor i32)
+  (call_ref (type $scale_sig)
+    (mem.read_ref  (local.get $s) (i32.const 0))
+    (local.get $factor)
+    (mem.read_func (mem.read_ref (local.get $s) (i32.const 1)) (i32.const 1))))
 ```
 
-See [`examples/06_polymorphic_interfaces/`](../examples/06_polymorphic_interfaces/) for a complete runnable 3-module example (`rect.wat`, `square.wat`, `main.wat`).
+See [`examples/06_polymorphic_interfaces/`](../examples/06_polymorphic_interfaces/) for the complete runnable 4-module example (`shape.wat`, `rect.wat`, `square.wat`, `main.wat`).

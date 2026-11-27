@@ -40,7 +40,7 @@ examples: $(CLI_BIN)
 	@printf "03_bulk_and_spans: "; $(CLI_BIN) examples/03_bulk_and_spans.wat main
 	@echo "--- 04_gc_and_clone_span ---"; $(CLI_BIN) --gc-threshold 32 --gc-stats examples/04_gc_and_clone_span.wat main
 	@printf "05_multimodule_sharing: "; $(CLI_BIN) --link strlib=examples/05_multimodule_sharing/strlib.wat examples/05_multimodule_sharing/app.wat main
-	@echo "--- 06_polymorphic_interfaces ---"; $(CLI_BIN) --link rect=examples/06_polymorphic_interfaces/rect.wat --link square=examples/06_polymorphic_interfaces/square.wat --gc-stats examples/06_polymorphic_interfaces/main.wat main
+	@echo "--- 06_polymorphic_interfaces ---"; $(CLI_BIN) --link shape=examples/06_polymorphic_interfaces/shape.wat --link rect=examples/06_polymorphic_interfaces/rect.wat --link square=examples/06_polymorphic_interfaces/square.wat --gc-stats examples/06_polymorphic_interfaces/main.wat main
 
 clean:
 	rm -rf $(BUILD_DIR)

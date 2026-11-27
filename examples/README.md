@@ -10,7 +10,7 @@ Build the CLI first with `make`, or run all examples at once with `make examples
 | [`03_bulk_and_spans.wat`](03_bulk_and_spans.wat) | 2 | `mem.fill`, overlapping `mem.copy`, nested `mem.span`, `mem.readonly` | `260` |
 | [`04_gc_and_clone_span.wat`](04_gc_and_clone_span.wat) | 3 | Precise cycle collection, auto-GC threshold, `mem.clone_span` detaching 4 KiB buffers | `4950` + `[gc] ...` |
 | [`05_multimodule_sharing/`](05_multimodule_sharing/) | 4 | Direct cross-module calls passing zero-copy `ro_handle` spans + `mem.cmp` | `102` |
-| [`06_polymorphic_interfaces/`](06_polymorphic_interfaces/) | 4 | Go/Rust-style trait objects (`ro_handle` `[data, vtable]`), `ref.func`, `mem.alloc_vtable`, `call_ref` (zero tables!) | `139` + `[gc] ...` |
+| [`06_polymorphic_interfaces/`](06_polymorphic_interfaces/) | 4 | Stateless `shape.wat` interface + Go/Rust trait objects (`ro_handle` `[data, vtable]`), multi-signature `call_ref` (`area`, `scale`) | `316` + `[gc] ...` |
 
 ## Running Individually
 
@@ -26,8 +26,9 @@ Build the CLI first with `make`, or run all examples at once with `make examples
   --link strlib=examples/05_multimodule_sharing/strlib.wat \
   examples/05_multimodule_sharing/app.wat main
 
-# Cross-module Go/Rust-style trait objects (vtable blocks + call_ref, zero tables!)
+# Cross-module Go/Rust-style trait objects (stateless shape.wat + vtable blocks + call_ref)
 ./build/optrich-vm \
+  --link shape=examples/06_polymorphic_interfaces/shape.wat \
   --link rect=examples/06_polymorphic_interfaces/rect.wat \
   --link square=examples/06_polymorphic_interfaces/square.wat \
   --gc-stats \
