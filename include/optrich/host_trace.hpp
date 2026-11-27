@@ -2,7 +2,10 @@
 
 #include "optrich/runtime.hpp"
 
+#include <algorithm>
+#include <cstring>
 #include <iomanip>
+#include <memory>
 #include <ostream>
 #include <sstream>
 #include <string>
@@ -85,6 +88,62 @@ inline void register_host_trace(Runtime& rt, std::ostream& out) {
             GCStats stats = rt.collect_garbage();
             out << label << ": live=" << stats.liveAfter << " swept=" << stats.swept << "\n";
             return {};
+        });
+
+    // Capability-safe host I/O helpers for Iteration 7+ golden tests:
+    // - io_open_reader(seed: ro_handle) -> ro_handle (opaque unforgeable stream handle)
+    // - io_read(stream: ro_handle, dst: rw_handle) -> i32 (bytes read, 0 on EOF)
+    // - io_write(label: ro_handle, data: ro_handle) -> i32 (logs and returns bytes written)
+    struct HostReaderState {
+        struct Stream {
+            std::string data;
+            size_t      pos = 0;
+        };
+        std::vector<Stream> streams;
+    };
+    auto io_state = std::make_shared<HostReaderState>();
+
+    rt.register_host_func(
+        "host", "io_open_reader",
+        FuncSignature{{ValType::RoHandle}, {ValType::RoHandle}},
+        [io_state](MemoryStore& store, const std::vector<Value>& args) -> std::vector<Value> {
+            std::string data = read_handle_string(store, args[0].handle);
+            uint32_t sid = static_cast<uint32_t>(io_state->streams.size());
+            io_state->streams.push_back(HostReaderState::Stream{std::move(data), 0});
+            std::string id_bytes(4, '\0');
+            std::memcpy(id_bytes.data(), &sid, 4);
+            FatHandle h = store.alloc_readonly_bytes(id_bytes);
+            return {Value::from_handle(h)};
+        });
+
+    rt.register_host_func(
+        "host", "io_read",
+        FuncSignature{{ValType::RoHandle, ValType::RwHandle}, {ValType::I32}},
+        [io_state](MemoryStore& store, const std::vector<Value>& args) -> std::vector<Value> {
+            uint32_t sid = 0;
+            store.read_bytes(args[0].handle.id, 0, &sid, 4);
+            if (sid >= io_state->streams.size()) {
+                throw Trap("host::io_read invalid stream handle");
+            }
+            auto& st = io_state->streams[sid];
+            uint32_t cap = store.byte_len(args[1].handle.id);
+            size_t avail = (st.pos < st.data.size()) ? (st.data.size() - st.pos) : 0;
+            uint32_t n = static_cast<uint32_t>(std::min<size_t>(cap, avail));
+            if (n > 0) {
+                store.write_bytes(args[1].handle.id, 0, st.data.data() + st.pos, n);
+                st.pos += n;
+            }
+            return {Value::from_i32(static_cast<int32_t>(n))};
+        });
+
+    rt.register_host_func(
+        "host", "io_write",
+        FuncSignature{{ValType::RoHandle, ValType::RoHandle}, {ValType::I32}},
+        [&out](MemoryStore& store, const std::vector<Value>& args) -> std::vector<Value> {
+            std::string label = read_handle_string(store, args[0].handle);
+            std::string data  = read_handle_string(store, args[1].handle);
+            out << label << ": \"" << data << "\"\n";
+            return {Value::from_i32(static_cast<int32_t>(data.size()))};
         });
 }
 

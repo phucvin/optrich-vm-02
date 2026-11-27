@@ -1,0 +1,3 @@
+inspector=inspector.guessed.wat
+producer=producer.guessed.wat
+main=main.guessed.wat

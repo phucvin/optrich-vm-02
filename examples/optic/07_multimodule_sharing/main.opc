@@ -1,0 +1,41 @@
+// Example 07 (Module 3/3) — `main`: zero-copy cross-module rw->ro sharing + capability-safe host I/O
+
+import host::trace_i32;
+import host::trace_meta;
+import host::io_open_reader;
+import host::io_read;
+import host::io_write;
+import producer::make_packet;
+import inspector::inspect_checksum;
+import inspector::get_call_count;
+
+export fn main() -> i32 {
+    // 1. Producer allocates rw []u8; main downgrades to ro []u8 and shares zero-copy with inspector
+    let pkt = make_packet(5); // [10, 100, 5] => sum = 115
+    let ro_view = readonly(pkt);
+    let c1 = inspect_checksum(ro_view);
+    trace_i32("step1.checksum_before_mut", c1);
+
+    // Mutate original rw handle; inspector sees updated byte through same zero-copy ro_view!
+    pkt[2] = 25; // [10, 100, 25] => sum = 135
+    let c2 = inspect_checksum(ro_view);
+    trace_i32("step2.checksum_after_mut", c2);
+
+    // Second packet verifies producer's global NEXT_SEQ incremented to 101
+    let pkt2 = make_packet(1); // [10, 101, 1] => sum = 112
+    let c3 = inspect_checksum(readonly(pkt2));
+    trace_i32("step3.pkt2_checksum", c3);
+    trace_i32("step4.inspector_calls", get_call_count());
+
+    // 2. Capability-safe host I/O: opaque ro_handle reader -> rw []u8 buffer -> ro []u8 writer
+    let reader = io_open_reader("Optic-IO-Stream");
+    trace_meta("step5.reader_meta", reader);
+
+    let chunk = new [u8; 6];
+    let n1 = io_read(reader, chunk); // "Optic-" (6 bytes)
+    let w1 = io_write("step6.io_chunk1", readonly(chunk[0..n1]));
+    let n2 = io_read(reader, chunk); // "IO-Str" (6 bytes)
+    let w2 = io_write("step7.io_chunk2", readonly(chunk[0..n2]));
+
+    return c1 + c2 + c3 + w1 + w2;
+}

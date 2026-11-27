@@ -280,7 +280,18 @@ Generic structs (`struct Box<T>`, `struct Pair<A, B>`) and generic functions (`f
 
 ---
 
-## 9. Open Design Questions (To Resolve Across Iterations)
+## 9. Multi-Module Sharing, Globals & Host Capabilities
+
+* **Cross-module `import` / `export`:** Functions marked `export fn` lower to `(func (export "name") ...)`; `import mod::func;` lowers to `(import "mod" "func" (func $func ...))`. Handles (`rw_handle`, `ro_handle`, `handle`) cross module boundaries directly with zero copying because all modules share one `MemoryStore` and one precise GC.
+* **Module `const` and `static mut` globals:**
+  * `const X: i32 = 42;` lowers to an immutable Wasm `(global $X i32 (i32.const 42))` (or inline constant).
+  * `static mut COUNT: i32 = 0;` lowers to `(global $COUNT (mut i32) (i32.const 0))`.
+  * Module globals are initialized in dependency/instantiation order when each module is instantiated.
+* **Capability-safe Host I/O:** Host APIs accept `ro []u8` for read-only outputs (`io_write`), `[]u8` (`rw_handle`) for writable receive buffers (`io_read`), and return opaque unforgeable `ro_handle`s for host-managed resources (`io_open_reader`).
+
+---
+
+## 10. Open Design Questions (To Resolve Across Iterations)
 
 1. **Implicit vs. explicit `readonly(...)`:** Should passing `[]u8` to a `ro []u8` parameter require explicit `readonly(buf)` or auto-insert `mem.readonly`? (Explicit makes the capability downgrade visible; implicit is more ergonomic.)
 2. **Shallow vs. transitive `ro T`:** If `e: ro Entry` has a mutable child field `child: Node`, should `e.child` be `ro Node` (transitive) or `Node` (shallow)?

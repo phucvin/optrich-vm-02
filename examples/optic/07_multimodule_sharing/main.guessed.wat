@@ -1,0 +1,63 @@
+;; Guessed WAT for examples/optic/07_multimodule_sharing/main.opc
+(module
+  (import "host" "trace_i32"      (func $trace_i32      (param ro_handle i32)))
+  (import "host" "trace_meta"     (func $trace_meta     (param ro_handle handle)))
+  (import "host" "io_open_reader" (func $io_open_reader (param ro_handle) (result ro_handle)))
+  (import "host" "io_read"        (func $io_read        (param ro_handle rw_handle) (result i32)))
+  (import "host" "io_write"       (func $io_write       (param ro_handle ro_handle) (result i32)))
+  (import "producer"  "make_packet"      (func $make_packet      (param i32) (result rw_handle)))
+  (import "inspector" "inspect_checksum" (func $inspect_checksum (param ro_handle) (result i32)))
+  (import "inspector" "get_call_count"   (func $get_call_count   (result i32)))
+
+  (string $l1 "step1.checksum_before_mut")
+  (string $l2 "step2.checksum_after_mut")
+  (string $l3 "step3.pkt2_checksum")
+  (string $l4 "step4.inspector_calls")
+  (string $l5 "step5.reader_meta")
+  (string $l6 "step6.io_chunk1")
+  (string $l7 "step7.io_chunk2")
+  (string $s_stream "Optic-IO-Stream")
+
+  (func (export "main") (result i32)
+    (local $pkt rw_handle)
+    (local $ro_view ro_handle)
+    (local $c1 i32)
+    (local $c2 i32)
+    (local $pkt2 rw_handle)
+    (local $c3 i32)
+    (local $reader ro_handle)
+    (local $chunk rw_handle)
+    (local $n1 i32)
+    (local $w1 i32)
+    (local $n2 i32)
+    (local $w2 i32)
+
+    (local.set $pkt (call $make_packet (i32.const 5)))
+    (local.set $ro_view (mem.readonly (local.get $pkt)))
+    (local.set $c1 (call $inspect_checksum (local.get $ro_view)))
+    (call $trace_i32 (mem.const_str $l1) (local.get $c1))
+
+    (mem.write_u8 (local.get $pkt) (i32.const 2) (i32.const 25))
+    (local.set $c2 (call $inspect_checksum (local.get $ro_view)))
+    (call $trace_i32 (mem.const_str $l2) (local.get $c2))
+
+    (local.set $pkt2 (call $make_packet (i32.const 1)))
+    (local.set $c3 (call $inspect_checksum (mem.readonly (local.get $pkt2))))
+    (call $trace_i32 (mem.const_str $l3) (local.get $c3))
+    (call $trace_i32 (mem.const_str $l4) (call $get_call_count))
+
+    (local.set $reader (call $io_open_reader (mem.const_str $s_stream)))
+    (call $trace_meta (mem.const_str $l5) (local.get $reader))
+
+    (local.set $chunk (mem.alloc (i32.const 6) (i32.const 0)))
+    (local.set $n1 (call $io_read (local.get $reader) (local.get $chunk)))
+    (local.set $w1 (call $io_write (mem.const_str $l6)
+                     (mem.readonly (mem.span (local.get $chunk) (i32.const 0) (local.get $n1)))))
+    (local.set $n2 (call $io_read (local.get $reader) (local.get $chunk)))
+    (local.set $w2 (call $io_write (mem.const_str $l7)
+                     (mem.readonly (mem.span (local.get $chunk) (i32.const 0) (local.get $n2)))))
+
+    (i32.add
+      (i32.add (local.get $c1) (local.get $c2))
+      (i32.add (local.get $c3) (i32.add (local.get $w1) (local.get $w2)))))
+)
