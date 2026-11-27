@@ -167,7 +167,7 @@
     (call $ByteBuf__push_str (local.get $sb) (mem.const_str $s_seq))
     (call $ByteBuf__push_u32_dec (local.get $sb) (i32.const 420))
     (call $ByteBuf__push_str (local.get $sb) (mem.const_str $s_colon))
-    (call $trace_str (mem.const_str $l5) (call $ByteBuf__as_str (mem.readonly (local.get $sb))))
+    (call $trace_str (mem.const_str $l5) (call $ByteBuf__as_str (local.get $sb)))
 
     ;; 3. UTF-8 string "Hi\xe2\x82\xac!" (6 bytes, 4 codepoints)
     (local.set $utf8_buf (mem.alloc (i32.const 6) (i32.const 0)))
