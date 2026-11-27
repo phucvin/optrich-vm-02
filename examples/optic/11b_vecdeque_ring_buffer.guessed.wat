@@ -2,6 +2,7 @@
 ;; VecDeque<i32>: mem.alloc(12, 1) -> bytes[0..4)=head, bytes[4..8)=len, bytes[8..12)=cap, refs[0]=buf([]i32)
 (module
   (import "host" "trace_i32" (func $trace_i32 (param ro_handle i32)))
+  (import "host" "trace_gc"  (func $trace_gc  (param ro_handle)))
 
   (string $l1 "step1.pop_front")
   (string $l2 "step2.wrapped_len")
@@ -10,9 +11,27 @@
   (string $l5 "step5.pop_back")
   (string $l6 "step6.pop_front_2")
   (string $l7 "step7.pop_front_3")
+  (string $l8 "step8.gc_after_grow")
 
-  (func $VecDeque_i32__new (param $cap i32) (result rw_handle)
+  (func $next_pow2 (param $n i32) (result i32)
+    (local $p i32)
+    (local.set $p (i32.const 4))
+    (block $break
+      (loop $cont
+        (br_if $break (i32.ge_s (local.get $p) (local.get $n)))
+        (local.set $p (i32.shl (local.get $p) (i32.const 1)))
+        (br $cont)))
+    (local.get $p))
+
+  (func $unwrap_or (param $ok i32) (param $val i32) (param $def i32) (result i32)
+    (if (result i32) (local.get $ok)
+      (then (local.get $val))
+      (else (local.get $def))))
+
+  (func $VecDeque_i32__new (param $min_cap i32) (result rw_handle)
+    (local $cap i32)
     (local $d rw_handle)
+    (local.set $cap (call $next_pow2 (local.get $min_cap)))
     (local.set $d (mem.alloc (i32.const 12) (i32.const 1)))
     (mem.write_i32 (local.get $d) (i32.const 0) (i32.const 0))
     (mem.write_i32 (local.get $d) (i32.const 4) (i32.const 0))
@@ -87,37 +106,43 @@
     (mem.write_i32 (mem.read_ref (local.get $d) (i32.const 0)) (i32.shl (local.get $head) (i32.const 2)) (local.get $val))
     (mem.write_i32 (local.get $d) (i32.const 4) (i32.add (local.get $len) (i32.const 1))))
 
-  (func $VecDeque_i32__pop_front (param $d rw_handle) (result i32)
+  ;; Returns unboxed Option<i32> = (is_some: i32, val: i32)
+  (func $VecDeque_i32__pop_front (param $d rw_handle) (result i32 i32)
     (local $head i32)
     (local $len i32)
     (local $cap i32)
     (local $val i32)
     (local.set $len (mem.read_i32 (local.get $d) (i32.const 4)))
-    (if (i32.le_s (local.get $len) (i32.const 0)) (then (unreachable)))
+    (if (i32.eqz (local.get $len)) (then (return (i32.const 0) (i32.const 0))))
     (local.set $head (mem.read_i32 (local.get $d) (i32.const 0)))
     (local.set $cap  (mem.read_i32 (local.get $d) (i32.const 8)))
     (local.set $val (mem.read_i32 (mem.read_ref (local.get $d) (i32.const 0)) (i32.shl (local.get $head) (i32.const 2))))
     (mem.write_i32 (local.get $d) (i32.const 0)
       (i32.and (i32.add (local.get $head) (i32.const 1)) (i32.sub (local.get $cap) (i32.const 1))))
     (mem.write_i32 (local.get $d) (i32.const 4) (i32.sub (local.get $len) (i32.const 1)))
-    (local.get $val))
+    (i32.const 1) (local.get $val))
 
-  (func $VecDeque_i32__pop_back (param $d rw_handle) (result i32)
+  ;; Returns unboxed Option<i32> = (is_some: i32, val: i32)
+  (func $VecDeque_i32__pop_back (param $d rw_handle) (result i32 i32)
     (local $head i32)
     (local $len i32)
     (local $cap i32)
     (local $idx i32)
+    (local $val i32)
     (local.set $len (mem.read_i32 (local.get $d) (i32.const 4)))
-    (if (i32.le_s (local.get $len) (i32.const 0)) (then (unreachable)))
+    (if (i32.eqz (local.get $len)) (then (return (i32.const 0) (i32.const 0))))
     (local.set $len (i32.sub (local.get $len) (i32.const 1)))
     (local.set $head (mem.read_i32 (local.get $d) (i32.const 0)))
     (local.set $cap  (mem.read_i32 (local.get $d) (i32.const 8)))
     (local.set $idx (i32.and (i32.add (local.get $head) (local.get $len)) (i32.sub (local.get $cap) (i32.const 1))))
+    (local.set $val (mem.read_i32 (mem.read_ref (local.get $d) (i32.const 0)) (i32.shl (local.get $idx) (i32.const 2))))
     (mem.write_i32 (local.get $d) (i32.const 4) (local.get $len))
-    (mem.read_i32 (mem.read_ref (local.get $d) (i32.const 0)) (i32.shl (local.get $idx) (i32.const 2))))
+    (i32.const 1) (local.get $val))
 
   (func (export "main") (result i32)
     (local $dq rw_handle)
+    (local $ok i32)
+    (local $v i32)
     (local $f1 i32)
     (local $b1 i32)
     (local $f2 i32)
@@ -128,7 +153,9 @@
     (call $VecDeque_i32__push_back (local.get $dq) (i32.const 20))
     (call $VecDeque_i32__push_back (local.get $dq) (i32.const 30))
 
-    (local.set $f1 (call $VecDeque_i32__pop_front (local.get $dq)))
+    (call $VecDeque_i32__pop_front (local.get $dq))
+    (local.set $v) (local.set $ok)
+    (local.set $f1 (call $unwrap_or (local.get $ok) (local.get $v) (i32.const -1)))
     (call $trace_i32 (mem.const_str $l1) (local.get $f1))
 
     (call $VecDeque_i32__push_back (local.get $dq) (i32.const 40))
@@ -139,12 +166,25 @@
     (call $trace_i32 (mem.const_str $l3) (mem.read_i32 (local.get $dq) (i32.const 8)))
     (call $trace_i32 (mem.const_str $l4) (mem.read_i32 (local.get $dq) (i32.const 4)))
 
-    (local.set $b1 (call $VecDeque_i32__pop_back (local.get $dq)))
-    (local.set $f2 (call $VecDeque_i32__pop_front (local.get $dq)))
-    (local.set $f3 (call $VecDeque_i32__pop_front (local.get $dq)))
+    (call $VecDeque_i32__pop_back (local.get $dq))
+    (local.set $v) (local.set $ok)
+    (local.set $b1 (call $unwrap_or (local.get $ok) (local.get $v) (i32.const -1)))
+
+    (call $VecDeque_i32__pop_front (local.get $dq))
+    (local.set $v) (local.set $ok)
+    (local.set $f2 (call $unwrap_or (local.get $ok) (local.get $v) (i32.const -1)))
+
+    (call $VecDeque_i32__pop_front (local.get $dq))
+    (local.set $v) (local.set $ok)
+    (local.set $f3 (call $unwrap_or (local.get $ok) (local.get $v) (i32.const -1)))
+
     (call $trace_i32 (mem.const_str $l5) (local.get $b1))
     (call $trace_i32 (mem.const_str $l6) (local.get $f2))
     (call $trace_i32 (mem.const_str $l7) (local.get $f3))
+
+    ;; Live: 8 const strings + dq(1 header + 1 backing buf = 2) = 10
+    ;; Swept: 1 old cap=4 backing buffer from grow()!
+    (call $trace_gc (mem.const_str $l8))
 
     (i32.add (i32.add (local.get $f1) (local.get $b1))
              (i32.add (local.get $f2) (local.get $f3))))

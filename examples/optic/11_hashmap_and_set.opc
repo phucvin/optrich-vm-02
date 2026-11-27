@@ -1,4 +1,4 @@
-// Example 11 — Generic `HashMap<K: Hash + Eq, V>` and `Set<T: Hash + Eq>` (Open Addressing + Rehash + GC)
+// Example 11 — Generic `HashMap<K: Hash + Eq, V>` and `Set<T: Hash + Eq>` (Open Addressing + Tombstones + Rehash + GC)
 
 import host::trace_i32;
 import host::trace_gc;
@@ -12,7 +12,7 @@ trait Eq {
 }
 
 impl Hash for str {
-    fn hash(self: ro str) -> u32 {
+    fn hash(self: str) -> u32 {
         let mut h: u32 = 2166136261;
         for i in 0..self.len {
             h = (h ^ (self[i] as u32)) * 16777619;
@@ -22,45 +22,197 @@ impl Hash for str {
 }
 
 impl Eq for str {
-    fn eq(self: ro str, other: ro str) -> bool {
+    fn eq(self: str, other: str) -> bool {
         if self.len != other.len { return false; }
-        return mem_cmp(self, 0, other, 0, self.len) == 0;
+        // Lowered to bulk `mem.cmp` for contiguous byte slices
+        for i in 0..self.len {
+            if self[i] != other[i] { return false; }
+        }
+        return true;
     }
 }
 
+fn next_pow2(n: i32) -> i32 {
+    let mut p = 4;
+    while p < n {
+        p = p << 1;
+    }
+    return p;
+}
+
+fn unwrap_or(opt: Option<i32>, def: i32) -> i32 {
+    return match opt {
+        Option::Some(v) => v,
+        Option::None => def,
+    };
+}
+
 struct HashMap<K: Hash + Eq, V> {
-    len: i32,
-    cap: i32,
+    len: i32,     // live entries
+    used: i32,    // live + tombstone entries (prevents probe-loop exhaustion)
+    cap: i32,     // always a power of 2 >= 4
     states: []u8, // 0=empty, 1=occupied, 2=tombstone
     keys: []K,
     vals: []V,
+}
+
+impl<K: Hash + Eq, V> HashMap<K, V> {
+    fn new(min_cap: i32) -> HashMap<K, V> {
+        let cap = next_pow2(min_cap);
+        return HashMap<K, V> {
+            len: 0,
+            used: 0,
+            cap: cap,
+            states: new [u8; cap],
+            keys: new [K; cap],
+            vals: new [V; cap],
+        };
+    }
+
+    // Returns: 0=updated existing, 1=inserted in empty slot, 2=inserted in tombstone slot
+    fn insert_raw(states: []u8, keys: []K, vals: []V, cap: i32, k: K, v: V) -> i32 {
+        let mask = cap - 1;
+        let mut idx = (k.hash() as i32) & mask;
+        let mut first_tomb = -1;
+        while true {
+            let st = states[idx];
+            if st == 0 {
+                if first_tomb >= 0 {
+                    states[first_tomb] = 1;
+                    keys[first_tomb] = k;
+                    vals[first_tomb] = v;
+                    return 2;
+                }
+                states[idx] = 1;
+                keys[idx] = k;
+                vals[idx] = v;
+                return 1;
+            }
+            if st == 1 && keys[idx].eq(k) {
+                vals[idx] = v;
+                return 0;
+            }
+            if st == 2 && first_tomb < 0 {
+                first_tomb = idx;
+            }
+            idx = (idx + 1) & mask;
+        }
+        return 0;
+    }
+
+    fn rehash(self) {
+        let old_cap = self.cap;
+        let new_cap = if self.len * 2 >= old_cap { old_cap << 1 } else { old_cap };
+        let new_st = new [u8; new_cap];
+        let new_k = new [K; new_cap];
+        let new_v = new [V; new_cap];
+        for i in 0..old_cap {
+            if self.states[i] == 1 {
+                HashMap<K, V>::insert_raw(new_st, new_k, new_v, new_cap, self.keys[i], self.vals[i]);
+            }
+        }
+        self.cap = new_cap;
+        self.used = self.len;
+        self.states = new_st;
+        self.keys = new_k;
+        self.vals = new_v;
+    }
+
+    fn insert(self, k: K, v: V) {
+        if (self.used + 1) * 4 > self.cap * 3 {
+            self.rehash();
+        }
+        let status = HashMap<K, V>::insert_raw(self.states, self.keys, self.vals, self.cap, k, v);
+        if status == 1 {
+            self.len += 1;
+            self.used += 1;
+        } else if status == 2 {
+            self.len += 1;
+        }
+    }
+
+    fn get(self: ro Self, k: K) -> Option<V> {
+        let mask = self.cap - 1;
+        let mut idx = (k.hash() as i32) & mask;
+        while true {
+            let st = self.states[idx];
+            if st == 0 {
+                return Option::None;
+            }
+            if st == 1 && self.keys[idx].eq(k) {
+                return Option::Some(self.vals[idx]);
+            }
+            idx = (idx + 1) & mask;
+        }
+        return Option::None;
+    }
+
+    fn remove(self, k: K) -> bool {
+        let mask = self.cap - 1;
+        let mut idx = (k.hash() as i32) & mask;
+        while true {
+            let st = self.states[idx];
+            if st == 0 {
+                return false;
+            }
+            if st == 1 && self.keys[idx].eq(k) {
+                self.states[idx] = 2;
+                // Compiler nulls reference-typed key/val slots on removal for GC safety
+                self.len -= 1;
+                return true;
+            }
+            idx = (idx + 1) & mask;
+        }
+        return false;
+    }
 }
 
 struct Set<T: Hash + Eq> {
     inner: HashMap<T, u8>,
 }
 
+impl<T: Hash + Eq> Set<T> {
+    fn new(min_cap: i32) -> Set<T> {
+        return Set<T> { inner: HashMap<T, u8>::new(min_cap) };
+    }
+
+    fn add(self, item: T) {
+        self.inner.insert(item, 1);
+    }
+
+    fn len(self: ro Self) -> i32 {
+        return self.inner.len;
+    }
+
+    fn contains(self: ro Self, item: T) -> bool {
+        return match self.inner.get(item) {
+            Option::Some(_) => true,
+            Option::None => false,
+        };
+    }
+}
+
 export fn main() -> i32 {
-    // 1. HashMap<str, i32> starting at cap=4, triggering rehash (4 -> 8) on 3rd insert
+    // 1. HashMap<str, i32> starting at cap=4, triggering rehash (4 -> 8) at >75% load factor
     let m = HashMap<str, i32>::new(4);
     m.insert("alpha", 10);
     m.insert("beta", 20);
-    m.insert("gamma", 30); // triggers rehash to cap=8
-    m.insert("delta", 40);
+    m.insert("gamma", 30);
+    m.insert("delta", 40); // used=3 -> (3+1)*4 > 4*3 triggers rehash to cap=8
     m.insert("beta", 25);  // update existing key
 
     trace_i32("step1.map_len", m.len);
     trace_i32("step2.map_cap", m.cap);
-    trace_i32("step3.get_beta", m.get("beta").unwrap_or(-1));
-    trace_i32("step4.get_missing", m.get("omega").unwrap_or(-1));
+    trace_i32("step3.get_beta", unwrap_or(m.get("beta"), -1));
+    trace_i32("step4.get_missing", unwrap_or(m.get("omega"), -1));
 
     // Remove "gamma" (marks tombstone + nulls keys[slot] for GC safety)
     let removed = m.remove("gamma");
     trace_i32("step5.removed_gamma", removed as i32);
-    trace_i32("step6.get_gamma_after", m.get("gamma").unwrap_or(-1));
-    trace_i32("step7.get_delta_after", m.get("delta").unwrap_or(-1));
+    trace_i32("step6.get_gamma_after", unwrap_or(m.get("gamma"), -1));
+    trace_i32("step7.get_delta_after", unwrap_or(m.get("delta"), -1));
 
-    // 2. Set<str> deduplication
+    // 2. Set<str> backed by monomorphized HashMap<str, u8>
     let s = Set<str>::new(4);
     s.add("red");
     s.add("green");
@@ -71,5 +223,5 @@ export fn main() -> i32 {
     // 3. GC sweeps the old cap=4 backing arrays from HashMap<str, i32> rehash!
     trace_gc("step10.gc_after_rehash");
 
-    return m.get("alpha").unwrap_or(0) + m.get("beta").unwrap_or(0) + m.get("delta").unwrap_or(0);
+    return unwrap_or(m.get("alpha"), 0) + unwrap_or(m.get("beta"), 0) + unwrap_or(m.get("delta"), 0);
 }

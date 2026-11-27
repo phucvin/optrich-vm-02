@@ -1,12 +1,100 @@
 // Example 11b — Generic `VecDeque<T>` Ring Buffer (Wrap-Around & Linearizing Growth via `mem.copy`)
 
 import host::trace_i32;
+import host::trace_gc;
+
+fn next_pow2(n: i32) -> i32 {
+    let mut p = 4;
+    while p < n {
+        p = p << 1;
+    }
+    return p;
+}
+
+fn unwrap_or(opt: Option<i32>, def: i32) -> i32 {
+    return match opt {
+        Option::Some(v) => v,
+        Option::None => def,
+    };
+}
 
 struct VecDeque<T> {
     head: i32,
     len: i32,
-    cap: i32,
+    cap: i32, // always a power of 2 >= 4
     buf: []T,
+}
+
+impl<T> VecDeque<T> {
+    fn new(min_cap: i32) -> VecDeque<T> {
+        let cap = next_pow2(min_cap);
+        return VecDeque<T> {
+            head: 0,
+            len: 0,
+            cap: cap,
+            buf: new [T; cap],
+        };
+    }
+
+    fn grow(self) {
+        let new_cap = self.cap << 1;
+        let new_buf = new [T; new_cap];
+        let mut first_part = self.cap - self.head;
+        if first_part > self.len {
+            first_part = self.len;
+        }
+        // Linearize wrapped ring buffer (lowered to up to 2 bulk `mem.copy` / `mem.copy_refs` ops)
+        for i in 0..first_part {
+            new_buf[i] = self.buf[self.head + i];
+        }
+        let second_part = self.len - first_part;
+        for i in 0..second_part {
+            new_buf[first_part + i] = self.buf[i];
+        }
+        self.head = 0;
+        self.cap = new_cap;
+        self.buf = new_buf;
+    }
+
+    fn push_back(self, val: T) {
+        if self.len == self.cap {
+            self.grow();
+        }
+        let idx = (self.head + self.len) & (self.cap - 1);
+        self.buf[idx] = val;
+        self.len += 1;
+    }
+
+    fn push_front(self, val: T) {
+        if self.len == self.cap {
+            self.grow();
+        }
+        self.head = (self.head - 1) & (self.cap - 1);
+        self.buf[self.head] = val;
+        self.len += 1;
+    }
+
+    fn pop_front(self) -> Option<T> {
+        if self.len == 0 {
+            return Option::None;
+        }
+        let val = self.buf[self.head];
+        // Compiler nulls reference-typed buf[head] slot on pop for GC safety
+        self.head = (self.head + 1) & (self.cap - 1);
+        self.len -= 1;
+        return Option::Some(val);
+    }
+
+    fn pop_back(self) -> Option<T> {
+        if self.len == 0 {
+            return Option::None;
+        }
+        self.len -= 1;
+        let idx = (self.head + self.len) & (self.cap - 1);
+        let val = self.buf[idx];
+        // Compiler nulls reference-typed buf[idx] slot on pop for GC safety
+        return Option::Some(val);
+    }
 }
 
 export fn main() -> i32 {
@@ -15,7 +103,7 @@ export fn main() -> i32 {
     dq.push_back(20);
     dq.push_back(30);
     // Pop front -> head advances to 1, elements are [20, 30]
-    let f1 = dq.pop_front();
+    let f1 = unwrap_or(dq.pop_front(), -1);
     trace_i32("step1.pop_front", f1);
 
     // Push back wraps around end of cap=4 buffer: [20, 30, 40, 50]
@@ -29,12 +117,15 @@ export fn main() -> i32 {
     trace_i32("step3.grown_cap", dq.cap);
     trace_i32("step4.grown_len", dq.len);
 
-    let b1 = dq.pop_back();  // 50
-    let f2 = dq.pop_front(); // 5
-    let f3 = dq.pop_front(); // 20
+    let b1 = unwrap_or(dq.pop_back(), -1);  // 50
+    let f2 = unwrap_or(dq.pop_front(), -1); // 5
+    let f3 = unwrap_or(dq.pop_front(), -1); // 20
     trace_i32("step5.pop_back", b1);
     trace_i32("step6.pop_front_2", f2);
     trace_i32("step7.pop_front_3", f3);
+
+    // GC sweeps the old cap=4 backing buffer from grow()!
+    trace_gc("step8.gc_after_grow");
 
     return f1 + b1 + f2 + f3;
 }

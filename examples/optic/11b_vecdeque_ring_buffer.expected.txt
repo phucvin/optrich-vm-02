@@ -5,4 +5,5 @@ step4.grown_len: 5
 step5.pop_back: 50
 step6.pop_front_2: 5
 step7.pop_front_3: 20
+step8.gc_after_grow: live=10 swept=1
 return: 85

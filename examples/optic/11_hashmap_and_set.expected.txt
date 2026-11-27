@@ -7,5 +7,5 @@ step6.get_gamma_after: -1
 step7.get_delta_after: 40
 step8.set_len: 2
 step9.set_has_green: 1
-step10.gc_after_rehash: live=25 swept=3
+step10.gc_after_rehash: live=26 swept=3
 return: 75
